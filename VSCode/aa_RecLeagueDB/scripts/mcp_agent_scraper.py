@@ -108,9 +108,17 @@ def load_cached_snapshots(url: str, max_age_days: int = 7) -> dict[str, str] | N
         if len(parts) == 2:
             ts = parts[0]
             page_key = parts[1].replace(".yaml", "")
+            content = f.read_text(encoding="utf-8")
+            # Reject stubs: old @playwright/mcp versions returned resource links
+            # instead of inline trees, producing files with no real accessibility data
+            if len(content) < 1000 or "```yaml" not in content:
+                logging.getLogger(__name__).warning(
+                    f"Cached snapshot {f.name} looks like a stub ({len(content)} bytes), skipping"
+                )
+                continue
             if ts not in timestamps:
                 timestamps[ts] = {}
-            timestamps[ts][page_key] = f.read_text(encoding="utf-8")
+            timestamps[ts][page_key] = content
 
     if not timestamps:
         return None

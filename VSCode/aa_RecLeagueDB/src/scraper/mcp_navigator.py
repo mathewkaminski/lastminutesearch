@@ -13,6 +13,68 @@ logger = logging.getLogger(__name__)
 MAX_PAGES = 25
 MAX_AGENT_TURNS = 20  # Safety cap on agent loop iterations
 
+# Keyword scoring config — single source of truth for navigation priority.
+# Used by _build_navigation_system_prompt() to embed scoring rubric in agent prompt.
+NAVIGATION_KEYWORDS: dict[str, list[str]] = {
+    # HIGH_PRIORITY (100 pts) — Always navigate these.
+    # These pages contain structured league data: fees, dates, format, capacity.
+    "high_priority": [
+        # League discovery / detail pages
+        "details", "more info", "view league", "league info", "league details",
+        "upcoming leagues", "upcoming", "seasons", "all leagues", "programs",
+        # Registration
+        "register", "registration", "signup", "sign up", "join", "enroll",
+        # Pricing / fees
+        "schedule", "standings", "results", "pricing", "fees", "cost",
+        "prices", "rates", "fee",
+    ],
+    # MEDIUM_PRIORITY (50 pts) — Navigate if page cap allows.
+    "medium_priority": [
+        "rules", "format", "teams", "divisions", "division", "competition",
+        "bracket", "playoffs", "roster", "scores", "ranking", "leaderboard",
+        "games", "calendar", "fixtures", "times", "program", "leagues",
+        "league", "sport", "sports",
+    ],
+    # LOW_PRIORITY (25 pts) — Only if nothing higher-priority remains.
+    "low_priority": [
+        "about", "news", "facility", "venues", "location", "map",
+    ],
+    # EXCLUDE (0 pts) — Never navigate. Skip regardless of any other context.
+    "exclude": [
+        # Social media
+        "facebook", "instagram", "twitter", "tiktok", "youtube", "linkedin",
+        "reddit", "pinterest", "snapchat",
+        # Auth / account flow
+        "login", "logout", "sign in", "signin", "account", "admin",
+        "dashboard", "profile", "checkout", "cart", "my account",
+        # Legal / boilerplate
+        "privacy", "terms", "legal", "cookie", "cookies", "gdpr",
+        "copyright", "disclaimer",
+        # Dead-end pages
+        "contact", "careers", "jobs", "sitemap", "accessibility",
+    ],
+    # LEAGUE_CARD_INDICATORS — patterns that identify a league entry on a listing page.
+    # When a page row/card contains several of these, it is a league entry.
+    # Always click any Details/More Info button associated with it.
+    "league_card_indicators": [
+        # Days of week
+        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+        # Sports
+        "volleyball", "soccer", "football", "basketball", "softball", "baseball",
+        "hockey", "lacrosse", "tennis", "badminton", "pickleball", "dodgeball",
+        "ultimate", "frisbee", "flag football",
+        # Gender / format
+        "co-ed", "coed", "men's", "women's", "mixed", "open",
+        # Surface / environment
+        "indoor", "outdoor", "beach", "grass", "turf", "court",
+        # Team format
+        "6 v 6", "6v6", "4 v 4", "4v4", "5 v 5", "5v5", "7 v 7", "7v7",
+        "8 v 8", "8v8",
+        # Season
+        "spring", "summer", "fall", "autumn", "winter",
+    ],
+}
+
 NAVIGATION_SYSTEM_PROMPT = """You are a web scraping agent for an adult recreational sports league database.
 
 Your job: navigate a sports league website and collect accessibility-tree snapshots from pages

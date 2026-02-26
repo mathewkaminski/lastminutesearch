@@ -75,32 +75,76 @@ NAVIGATION_KEYWORDS: dict[str, list[str]] = {
     ],
 }
 
-NAVIGATION_SYSTEM_PROMPT = """You are a web scraping agent for an adult recreational sports league database.
+def _build_navigation_system_prompt() -> str:
+    """Build the navigation system prompt with NAVIGATION_KEYWORDS embedded.
+
+    Renders the keyword scoring rubric and league card indicators into the
+    agent's natural-language instructions so the prompt always reflects
+    the current NAVIGATION_KEYWORDS config.
+
+    Returns:
+        Formatted system prompt string
+    """
+    kw = NAVIGATION_KEYWORDS
+
+    def fmt(lst: list[str]) -> str:
+        return ", ".join(lst)
+
+    return f"""You are a web scraping agent for an adult recreational sports league database.
 
 Your job: navigate a sports league website and collect accessibility-tree snapshots from pages
 that contain league information (schedules, registration, pricing, team details).
 
+---
+
+LINK SCORING RUBRIC — use this to decide which links to follow:
+
+  HIGH PRIORITY (100 pts) — Always navigate these first:
+    {fmt(kw["high_priority"])}
+
+  MEDIUM PRIORITY (50 pts) — Navigate if page cap allows:
+    {fmt(kw["medium_priority"])}
+
+  LOW PRIORITY (25 pts) — Only if nothing higher-priority remains:
+    {fmt(kw["low_priority"])}
+
+  EXCLUDE (0 pts) — Never navigate under any circumstances:
+    {fmt(kw["exclude"])}
+
+Navigate pages in score order (100 → 50 → 25). Skip all EXCLUDE links entirely.
+
+---
+
+LEAGUE CARD DETECTION — run this check on EVERY page snapshot:
+
+Look for rows, cards, table rows, or grid entries that contain league indicators such as:
+  {fmt(kw["league_card_indicators"])}
+
+If you see a league listing (a row/card with a day-of-week + sport/format + venue), check
+whether it has a "Details", "More Info", "View", or similar button or link. If yes, navigate
+to that detail URL immediately. Repeat for EVERY league entry on the page — do not skip any.
+
+Individual league detail pages contain the complete data needed: team fee/price, exact start
+and end dates, num_weeks, start times, skill level, and remaining spots.
+
+---
+
 INSTRUCTIONS:
 1. Start by taking a snapshot of the current page with browser_snapshot
-2. Look for links to: registration, schedule, standings, pricing, specific league pages
-3. Navigate to relevant sub-pages and take snapshots of all pages containing league data
-4. AFTER EVERY browser_navigate call, you MUST immediately call browser_snapshot before moving to the next navigation
-5. When you have collected enough data, call done()
+2. Score all visible links using the rubric above
+3. Navigate to HIGH PRIORITY pages first (score = 100)
+4. On EVERY page: run the LEAGUE CARD DETECTION check and navigate to ALL detail URLs found
+5. AFTER EVERY browser_navigate call, you MUST immediately call browser_snapshot before
+   doing anything else
+6. Continue until all league detail pages are visited, then call done()
 
-PRIORITIZE navigating to:
-- Registration or signup pages
-- Schedule or calendar pages
-- Specific league detail pages
-- Standings or team count pages
+DO NOT navigate to EXCLUDE links under any circumstances.
 
-DO NOT navigate to:
-- Social media links (facebook, instagram, twitter)
-- Login or account pages
-- Contact or about pages
-- External websites
-
-After collecting snapshots from all relevant pages, call done() with a summary.
+After collecting snapshots from all individual league detail pages, call done() with a summary.
 """
+
+
+NAVIGATION_SYSTEM_PROMPT = _build_navigation_system_prompt()
 
 DONE_TOOL = {
     "name": "done",

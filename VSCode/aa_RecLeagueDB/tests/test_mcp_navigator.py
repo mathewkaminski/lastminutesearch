@@ -18,12 +18,50 @@ def test_max_pages_default_is_25():
 
 
 def test_system_prompt_mentions_league_priorities():
-    """System prompt should instruct agent to prioritize league-relevant pages."""
+    """System prompt must contain link scoring rubric and league card detection."""
     from src.scraper.mcp_navigator import NAVIGATION_SYSTEM_PROMPT
     prompt_lower = NAVIGATION_SYSTEM_PROMPT.lower()
-    assert "registration" in prompt_lower
-    assert "schedule" in prompt_lower
+
+    # Scoring rubric must be present
+    assert "high priority" in prompt_lower
+    assert "medium priority" in prompt_lower
+    assert "exclude" in prompt_lower
+
+    # League card detection section must be present
+    assert "league card" in prompt_lower or "league entry" in prompt_lower or "league listing" in prompt_lower
+
+    # Done instruction must be present
     assert "done" in prompt_lower
+
+    # Old hardcoded cap must be gone
+    assert "5 total" not in NAVIGATION_SYSTEM_PROMPT
+    assert "4 sub-pages" not in NAVIGATION_SYSTEM_PROMPT
+
+
+def test_system_prompt_embeds_keywords():
+    """System prompt must embed key keywords from NAVIGATION_KEYWORDS."""
+    from src.scraper.mcp_navigator import NAVIGATION_SYSTEM_PROMPT, NAVIGATION_KEYWORDS
+    prompt_lower = NAVIGATION_SYSTEM_PROMPT.lower()
+
+    # Spot-check: a few high-priority keywords must appear in the prompt
+    for kw in ["register", "schedule", "details", "fees"]:
+        assert kw in prompt_lower, f"Expected '{kw}' in prompt (high_priority)"
+
+    # Spot-check: key exclude terms must appear
+    for kw in ["facebook", "login", "privacy"]:
+        assert kw in prompt_lower, f"Expected '{kw}' in prompt (exclude)"
+
+    # Spot-check: league card indicators must appear
+    for kw in ["monday", "volleyball", "co-ed"]:
+        assert kw in prompt_lower, f"Expected '{kw}' in prompt (league_card_indicators)"
+
+
+def test_build_navigation_system_prompt_is_callable():
+    """_build_navigation_system_prompt() must return a non-empty string."""
+    from src.scraper.mcp_navigator import _build_navigation_system_prompt
+    result = _build_navigation_system_prompt()
+    assert isinstance(result, str)
+    assert len(result) > 500
 
 
 def test_extract_snapshots_from_tool_calls_empty():

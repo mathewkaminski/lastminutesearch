@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 MAX_PAGES = 25
-MAX_AGENT_TURNS = 20  # Safety cap on agent loop iterations
+MAX_AGENT_TURNS = 40  # Safety cap on agent loop iterations
 
 # Keyword scoring config — single source of truth for navigation priority.
 # Used by _build_navigation_system_prompt() to embed scoring rubric in agent prompt.
@@ -134,8 +134,8 @@ INSTRUCTIONS:
 2. Score all visible links using the rubric above
 3. Navigate to HIGH PRIORITY pages first (score = 100)
 4. On EVERY page: run the LEAGUE CARD DETECTION check and navigate to ALL detail URLs found
-5. AFTER EVERY browser_navigate call, you MUST immediately call browser_snapshot before
-   doing anything else
+5. AFTER EVERY browser_navigate OR browser_click call, you MUST immediately call
+   browser_snapshot before doing anything else — this is mandatory, no exceptions
 6. Continue until all league detail pages are visited, then call done()
 
 DO NOT navigate to EXCLUDE links under any circumstances.
@@ -307,6 +307,12 @@ async def navigate_and_collect(
                 summary = tool_input.get("summary", "")
                 logger.info(f"Agent done: {summary}")
                 agent_done = True
+                # Capture the agent's summary as a fallback snapshot.
+                # If the agent visited pages via browser_click without snapshotting,
+                # its done() summary still contains the extracted data.
+                if summary and len(summary) > 200:
+                    snapshots["agent_summary"] = f"### Agent Navigation Summary\n\n{summary}"
+                    logger.info(f"Stored agent summary as fallback snapshot ({len(summary)} chars)")
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
@@ -331,6 +337,15 @@ async def navigate_and_collect(
                 # write the accessibility tree to a temp file instead of inline)
                 if tool_name == "browser_snapshot":
                     result_text = _resolve_snapshot_content(result_text)
+                    # Extract actual page URL from snapshot header so browser_click
+                    # navigation (which doesn't trigger the browser_navigate tracker)
+                    # still gets the correct URL key for snapshot storage.
+                    page_url_match = re.search(r'- Page URL: (.+?)(?:\n|$)', result_text)
+                    if page_url_match:
+                        actual_url = page_url_match.group(1).strip()
+                        if actual_url != url_tracker[-1]:
+                            url_tracker.append(actual_url)
+                            logger.debug(f"URL updated from snapshot header: {actual_url}")
             except Exception as e:
                 result_text = f"Error: {e}"
                 logger.warning(f"Tool {tool_name} failed: {e}")

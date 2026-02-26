@@ -54,8 +54,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument(
         "--max-pages",
         type=int,
-        default=50,
-        help="Maximum pages to visit per site (default: 50)",
+        default=25,
+        help="Maximum pages to visit per site (default: 25)",
     )
     return parser.parse_args(argv)
 
@@ -173,14 +173,14 @@ def setup_logging(log_level: str) -> None:
     logging.getLogger(__name__).info(f"Logging to {log_file}")
 
 
-async def run(url: str, dry_run: bool, force_refresh: bool, max_pages: int = 50) -> dict:
+async def run(url: str, dry_run: bool, force_refresh: bool, max_pages: int = 25) -> dict:
     """Main async pipeline: navigate -> extract -> (write).
 
     Args:
         url: URL to scrape
         dry_run: If True, skip DB write
         force_refresh: If True, ignore cache
-        max_pages: Maximum pages to visit per site (default: 50)
+        max_pages: Maximum pages to visit per site (default 25)
 
     Returns:
         Result dict with stats

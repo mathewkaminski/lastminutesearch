@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
-MAX_PAGES = 50
+MAX_PAGES = 25
 MAX_AGENT_TURNS = 20  # Safety cap on agent loop iterations
 
 NAVIGATION_SYSTEM_PROMPT = """You are a web scraping agent for an adult recreational sports league database.
@@ -144,7 +144,7 @@ async def navigate_and_collect(
         url: Starting URL to navigate from
         mcp_session: Active MCP ClientSession with Playwright tools
         mcp_tools: MCP tools in Anthropic format (from mcp_tools_to_anthropic_format)
-        max_pages: Maximum pages to visit (default 50)
+        max_pages: Maximum pages to visit (default 25)
 
     Returns:
         Dict mapping page_key -> accessibility_tree_text

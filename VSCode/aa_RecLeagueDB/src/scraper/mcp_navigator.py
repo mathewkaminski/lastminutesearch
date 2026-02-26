@@ -109,19 +109,26 @@ def _resolve_snapshot_content(result_text: str) -> str:
         return result_text
 
     linked_file = Path(match.group(1)).name
-    temp_dir = Path(tempfile.gettempdir()) / "playwright-mcp-output"
-    snapshot_path = temp_dir / linked_file
 
-    if snapshot_path.exists():
-        try:
-            content = snapshot_path.read_text(encoding="utf-8")
-            logger.debug(f"Resolved snapshot from file: {snapshot_path} ({len(content)} chars)")
-            # Return the header (page URL/title) + the actual tree
-            return result_text + "\n" + content
-        except Exception as e:
-            logger.warning(f"Failed to read snapshot file {snapshot_path}: {e}")
+    # @playwright/mcp writes snapshot files relative to process.cwd() when no
+    # --output-dir or MCP roots are configured. Check multiple candidate paths.
+    candidate_dirs = [
+        Path.cwd(),                                              # project root (most common)
+        Path(tempfile.gettempdir()) / "playwright-mcp-output",  # temp dir fallback
+    ]
 
-    logger.warning(f"Snapshot file not found: {snapshot_path}")
+    for candidate_dir in candidate_dirs:
+        snapshot_path = candidate_dir / linked_file
+        if snapshot_path.exists():
+            try:
+                content = snapshot_path.read_text(encoding="utf-8")
+                logger.debug(f"Resolved snapshot from file: {snapshot_path} ({len(content)} chars)")
+                # Return the header (page URL/title) + the actual tree
+                return result_text + "\n" + content
+            except Exception as e:
+                logger.warning(f"Failed to read snapshot file {snapshot_path}: {e}")
+
+    logger.warning(f"Snapshot file not found: {linked_file} (checked {[str(d) for d in candidate_dirs]})")
     return result_text
 
 

@@ -20,6 +20,8 @@ from urllib.parse import urlparse
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.scraper.mcp_navigator import MAX_PAGES as DEFAULT_MAX_PAGES
+
 # Load .env
 env_file = Path(__file__).parent.parent / ".env"
 if env_file.exists():
@@ -51,10 +53,16 @@ def parse_args(argv=None) -> argparse.Namespace:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Log level (default: INFO)",
     )
+    def positive_int(value: str) -> int:
+        ivalue = int(value)
+        if ivalue <= 0:
+            raise argparse.ArgumentTypeError(f"--max-pages must be a positive integer, got {value}")
+        return ivalue
+
     parser.add_argument(
         "--max-pages",
-        type=int,
-        default=25,
+        type=positive_int,
+        default=DEFAULT_MAX_PAGES,
         help="Maximum pages to visit per site (default: 25)",
     )
     return parser.parse_args(argv)
@@ -173,7 +181,7 @@ def setup_logging(log_level: str) -> None:
     logging.getLogger(__name__).info(f"Logging to {log_file}")
 
 
-async def run(url: str, dry_run: bool, force_refresh: bool, max_pages: int = 25) -> dict:
+async def run(url: str, dry_run: bool, force_refresh: bool, max_pages: int = DEFAULT_MAX_PAGES) -> dict:
     """Main async pipeline: navigate -> extract -> (write).
 
     Args:
@@ -307,6 +315,7 @@ def main(argv=None) -> int:
     logger.info(f"  URL: {args.url}")
     logger.info(f"  Dry-run: {args.dry_run}")
     logger.info(f"  Force-refresh: {args.force_refresh}")
+    logger.info(f"  Max pages:   {args.max_pages}")
 
     result = asyncio.run(run(args.url, args.dry_run, args.force_refresh, args.max_pages))
 

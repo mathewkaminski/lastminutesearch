@@ -57,3 +57,10 @@ def test_cache_path_uses_domain():
     from scripts.mcp_agent_scraper import get_cache_path
     path = get_cache_path("https://ottawavolleysixes.com/home", "home")
     assert "ottawavolleysixes.com" in str(path)
+
+
+def test_parse_args_max_pages_rejects_zero(capsys):
+    """--max-pages 0 should cause a parse error."""
+    with pytest.raises(SystemExit):
+        from scripts.mcp_agent_scraper import parse_args
+        parse_args(["--url", "https://example.com", "--max-pages", "0"])

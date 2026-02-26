@@ -6,6 +6,7 @@ Usage:
     python scripts/mcp_agent_scraper.py --url https://example.com
     python scripts/mcp_agent_scraper.py --url https://example.com --force-refresh
     python scripts/mcp_agent_scraper.py --url https://example.com --log-level DEBUG
+    python scripts/mcp_agent_scraper.py --url https://example.com --max-pages 10
 """
 import argparse
 import asyncio
@@ -49,6 +50,12 @@ def parse_args(argv=None) -> argparse.Namespace:
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Log level (default: INFO)",
+    )
+    parser.add_argument(
+        "--max-pages",
+        type=int,
+        default=25,
+        help="Maximum pages to visit per site (default: 25)",
     )
     return parser.parse_args(argv)
 
@@ -166,13 +173,14 @@ def setup_logging(log_level: str) -> None:
     logging.getLogger(__name__).info(f"Logging to {log_file}")
 
 
-async def run(url: str, dry_run: bool, force_refresh: bool) -> dict:
+async def run(url: str, dry_run: bool, force_refresh: bool, max_pages: int = 25) -> dict:
     """Main async pipeline: navigate -> extract -> (write).
 
     Args:
         url: URL to scrape
         dry_run: If True, skip DB write
         force_refresh: If True, ignore cache
+        max_pages: Maximum pages to visit per site (default: 25)
 
     Returns:
         Result dict with stats
@@ -215,7 +223,7 @@ async def run(url: str, dry_run: bool, force_refresh: bool) -> dict:
                     mcp_tools = mcp_tools_to_anthropic_format(tools_response.tools)
                     logger.info(f"MCP tools available: {[t['name'] for t in mcp_tools]}")
 
-                    snapshots = await navigate_and_collect(url, session, mcp_tools)
+                    snapshots = await navigate_and_collect(url, session, mcp_tools, max_pages=max_pages)
 
         except Exception as e:
             logger.error(f"MCP navigation failed: {e}", exc_info=True)
@@ -300,7 +308,7 @@ def main(argv=None) -> int:
     logger.info(f"  Dry-run: {args.dry_run}")
     logger.info(f"  Force-refresh: {args.force_refresh}")
 
-    result = asyncio.run(run(args.url, args.dry_run, args.force_refresh))
+    result = asyncio.run(run(args.url, args.dry_run, args.force_refresh, args.max_pages))
 
     print(f"\n{'='*60}")
     print("RESULT SUMMARY")

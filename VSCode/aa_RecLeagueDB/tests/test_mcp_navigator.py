@@ -11,6 +11,12 @@ def test_done_tool_definition():
     assert DONE_TOOL["input_schema"]["type"] == "object"
 
 
+def test_max_pages_default_is_25():
+    """MAX_PAGES default should be 25 to support sites with many individual league pages."""
+    from src.scraper.mcp_navigator import MAX_PAGES
+    assert MAX_PAGES == 25
+
+
 def test_system_prompt_mentions_league_priorities():
     """System prompt should instruct agent to prioritize league-relevant pages."""
     from src.scraper.mcp_navigator import NAVIGATION_SYSTEM_PROMPT

@@ -28,6 +28,20 @@ def test_parse_args_dry_run():
     assert args.dry_run is True
 
 
+def test_parse_args_max_pages_default():
+    """--max-pages defaults to 25."""
+    from scripts.mcp_agent_scraper import parse_args
+    args = parse_args(["--url", "https://example.com"])
+    assert args.max_pages == 25
+
+
+def test_parse_args_max_pages_custom():
+    """--max-pages accepts a custom integer."""
+    from scripts.mcp_agent_scraper import parse_args
+    args = parse_args(["--url", "https://example.com", "--max-pages", "10"])
+    assert args.max_pages == 10
+
+
 def test_cache_key_is_deterministic():
     """Same URL and page_key should produce same cache filename structure."""
     from scripts.mcp_agent_scraper import get_cache_path

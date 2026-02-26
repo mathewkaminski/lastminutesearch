@@ -19,7 +19,8 @@ INSTRUCTIONS:
 1. Start by taking a snapshot of the current page with browser_snapshot
 2. Look for links to: registration, schedule, standings, pricing, specific league pages
 3. Navigate to relevant sub-pages and take snapshots (up to 4 sub-pages, 5 total)
-4. When you have collected enough data, call done()
+4. AFTER EVERY browser_navigate call, you MUST immediately call browser_snapshot before moving to the next navigation
+5. When you have collected enough data, call done()
 
 PRIORITIZE navigating to:
 - Registration or signup pages

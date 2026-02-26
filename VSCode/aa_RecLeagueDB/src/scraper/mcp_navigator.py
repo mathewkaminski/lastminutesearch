@@ -2,6 +2,9 @@
 
 import asyncio
 import logging
+import re
+import tempfile
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -82,6 +85,44 @@ def _extract_snapshot_from_result(
 
     snapshot_store[key] = tool_result
     logger.info(f"Snapshot collected: {key} ({len(tool_result)} chars) from {current_url}")
+
+
+def _resolve_snapshot_content(result_text: str) -> str:
+    """Resolve full snapshot content when Playwright MCP returns a file link.
+
+    Some @playwright/mcp versions write the accessibility tree to a temp .md
+    file and return a stub like:
+        ### Snapshot
+        - [Snapshot](snapshot_main.md)
+
+    This function detects that pattern and reads the actual file from the
+    Windows temp playwright-mcp-output directory.
+
+    Args:
+        result_text: Raw text returned by browser_snapshot tool
+
+    Returns:
+        Full accessibility tree text, or original result_text if no link found
+    """
+    match = re.search(r'\[Snapshot\]\(([^)]+)\)', result_text)
+    if not match:
+        return result_text
+
+    linked_file = Path(match.group(1)).name
+    temp_dir = Path(tempfile.gettempdir()) / "playwright-mcp-output"
+    snapshot_path = temp_dir / linked_file
+
+    if snapshot_path.exists():
+        try:
+            content = snapshot_path.read_text(encoding="utf-8")
+            logger.debug(f"Resolved snapshot from file: {snapshot_path} ({len(content)} chars)")
+            # Return the header (page URL/title) + the actual tree
+            return result_text + "\n" + content
+        except Exception as e:
+            logger.warning(f"Failed to read snapshot file {snapshot_path}: {e}")
+
+    logger.warning(f"Snapshot file not found: {snapshot_path}")
+    return result_text
 
 
 async def navigate_and_collect(
@@ -173,6 +214,10 @@ async def navigate_and_collect(
                     for item in mcp_result.content
                     if hasattr(item, "text")
                 )
+                # Resolve file-link snapshots (some @playwright/mcp versions
+                # write the accessibility tree to a temp file instead of inline)
+                if tool_name == "browser_snapshot":
+                    result_text = _resolve_snapshot_content(result_text)
             except Exception as e:
                 result_text = f"Error: {e}"
                 logger.warning(f"Tool {tool_name} failed: {e}")

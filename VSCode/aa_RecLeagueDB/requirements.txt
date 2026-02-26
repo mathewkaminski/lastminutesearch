@@ -1,0 +1,53 @@
+# Core Dependencies
+python-dotenv>=1.0.0          # Environment variable management
+requests>=2.31.0              # HTTP requests
+
+# Supabase - Let supabase manage its own dependencies
+supabase>=2.3.0               # Supabase Python client
+
+# Web Scraping
+firecrawl-py>=0.0.16          # Firecrawl SDK for web scraping
+beautifulsoup4>=4.12.0        # HTML parsing (backup)
+lxml>=5.1.0                   # XML/HTML parser
+
+# Browser Automation (for recursive team crawler)
+selenium>=4.16.0              # Selenium WebDriver for browser automation
+undetected-chromedriver>=3.5.4  # Stealth Chrome for avoiding bot detection
+playwright>=1.40.0            # Playwright as fallback browser automation
+webdriver-manager>=4.0.0      # ChromeDriver management
+
+# AI/LLM - Use more flexible versions for Python 3.13 compatibility
+anthropic>=0.40.0             # Anthropic Claude API client
+mcp>=1.0.0                    # Model Context Protocol SDK
+openai>=1.12.0                # OpenAI API client
+langchain>=0.1.0              # LangChain framework
+langchain-openai>=0.0.5       # OpenAI integration for LangChain
+langgraph>=0.0.20             # LangGraph for multi-agent systems
+tiktoken>=0.6.0               # Token counting for OpenAI
+
+# Vector Store
+pgvector>=0.2.0               # PostgreSQL vector extension client
+
+# Data Processing
+pandas>=2.2.0                 # Data manipulation
+numpy>=1.26.0                 # Numerical computing
+pydantic>=2.6.0               # Data validation
+PyYAML>=6.0                   # YAML parsing and serialization
+
+# Utilities
+python-dateutil>=2.8.0        # Date parsing and manipulation
+pytz>=2024.1                  # Timezone support
+loguru>=0.7.0                 # Better logging
+
+# Testing
+pytest>=8.0.0                 # Testing framework
+pytest-asyncio>=0.23.0        # Async testing support
+pytest-mock>=3.12.0           # Mocking for tests
+
+# Web Interface
+streamlit>=1.31.0             # Web UI framework
+
+# Development
+black>=24.1.0                 # Code formatting
+flake8>=7.0.0                 # Linting
+mypy>=1.8.0                   # Type checking

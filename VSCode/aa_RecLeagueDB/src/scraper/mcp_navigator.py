@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
-MAX_PAGES = 25
+MAX_PAGES = 50
 MAX_AGENT_TURNS = 20  # Safety cap on agent loop iterations
 
 NAVIGATION_SYSTEM_PROMPT = """You are a web scraping agent for an adult recreational sports league database.
@@ -21,7 +21,7 @@ that contain league information (schedules, registration, pricing, team details)
 INSTRUCTIONS:
 1. Start by taking a snapshot of the current page with browser_snapshot
 2. Look for links to: registration, schedule, standings, pricing, specific league pages
-3. Navigate to relevant sub-pages and take snapshots (up to 4 sub-pages, 5 total)
+3. Navigate to relevant sub-pages and take snapshots of all pages containing league data
 4. AFTER EVERY browser_navigate call, you MUST immediately call browser_snapshot before moving to the next navigation
 5. When you have collected enough data, call done()
 
@@ -144,7 +144,7 @@ async def navigate_and_collect(
         url: Starting URL to navigate from
         mcp_session: Active MCP ClientSession with Playwright tools
         mcp_tools: MCP tools in Anthropic format (from mcp_tools_to_anthropic_format)
-        max_pages: Maximum pages to visit (default 25)
+        max_pages: Maximum pages to visit (default 50)
 
     Returns:
         Dict mapping page_key -> accessibility_tree_text

@@ -29,10 +29,10 @@ def test_parse_args_dry_run():
 
 
 def test_parse_args_max_pages_default():
-    """--max-pages defaults to 25."""
+    """--max-pages defaults to 50."""
     from scripts.mcp_agent_scraper import parse_args
     args = parse_args(["--url", "https://example.com"])
-    assert args.max_pages == 25
+    assert args.max_pages == 50
 
 
 def test_parse_args_max_pages_custom():

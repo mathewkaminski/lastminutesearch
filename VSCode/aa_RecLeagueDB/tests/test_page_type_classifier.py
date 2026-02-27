@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import patch, MagicMock
 
 
@@ -61,4 +60,4 @@ def test_classify_truncates_large_input():
         from src.scraper.page_type_classifier import classify_page, MAX_CLASSIFIER_CHARS
         classify_page(big_yaml)
 
-    assert len(captured["prompt"]) <= MAX_CLASSIFIER_CHARS + 500  # prompt template overhead
+    assert len(captured["prompt"]) <= MAX_CLASSIFIER_CHARS + 300  # prompt template overhead (~280 chars)

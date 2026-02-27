@@ -26,9 +26,6 @@ if env_file.exists():
 
 LOG_DIR = Path(__file__).parent.parent / "logs"
 
-# Leagues below this completeness threshold are not written to DB
-MIN_COMPLETENESS_PCT = 50.0
-
 
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -106,11 +103,6 @@ def run(url: str, dry_run: bool) -> dict:
                 f"{league.get('gender_eligibility')}"
             )
 
-            if pct < MIN_COMPLETENESS_PCT:
-                logger.info(f"  SKIP ({pct:.0f}%): {label}")
-                result["skipped_low_quality"] += 1
-                continue
-
             if dry_run:
                 logger.info(f"  DRY-RUN ({pct:.0f}%): {label}")
                 result["leagues_written"] += 1
@@ -118,9 +110,13 @@ def run(url: str, dry_run: bool) -> dict:
 
             try:
                 league_id, is_new = insert_league(league)
-                status = "NEW" if is_new else "UPDATED"
-                logger.info(f"  [{status}] {league_id[:8]}... ({pct:.0f}%): {label}")
-                result["leagues_written"] += 1
+                if league_id is None:
+                    logger.info(f"  SKIP (writer rejected, low quality {pct:.0f}%): {label}")
+                    result["skipped_low_quality"] += 1
+                else:
+                    status = "NEW" if is_new else "MERGED"
+                    logger.info(f"  [{status}] {league_id[:8]}... ({pct:.0f}%): {label}")
+                    result["leagues_written"] += 1
             except Exception as e:
                 msg = f"DB write failed for {label}: {e}"
                 logger.warning(msg)
@@ -145,7 +141,7 @@ def main(argv=None) -> int:
     print(f"Pages with leagues:   {result['pages_with_leagues']}")
     print(f"Leagues extracted:    {result['leagues_extracted']}")
     print(f"Leagues written:      {result['leagues_written']}")
-    print(f"Skipped (<50%):       {result['skipped_low_quality']}")
+    print(f"Skipped (low quality): {result['skipped_low_quality']}")
     if result["errors"]:
         print(f"Errors: {len(result['errors'])}")
         for err in result["errors"]:

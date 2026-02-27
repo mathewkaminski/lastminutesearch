@@ -64,11 +64,15 @@ def _follow_index_links(
 
     # Take up to MAX_DETAIL_LINKS unique unvisited same-domain links
     candidates = []
+    seen_candidates: set = set()
     for link in all_links:
         if link.url in visited:
             continue
+        if link.url in seen_candidates:
+            continue
         if not _same_domain(link.url, base_url):
             continue
+        seen_candidates.add(link.url)
         candidates.append(link)
         if len(candidates) >= MAX_DETAIL_LINKS:
             break

@@ -177,6 +177,7 @@ def test_crawl_follows_detail_links_from_league_index():
     urls = [url for url, _ in result]
     assert "https://example.com/detail-a" in urls
     assert "https://example.com/detail-b" in urls
+    assert "https://example.com/season" in urls  # index page itself is also collected
 
 
 def test_crawl_index_following_respects_max_index_depth():

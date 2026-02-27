@@ -85,10 +85,8 @@ def parse_yaml_links(yaml_tree, base_url: str = "") -> List[DiscoveredLink]:
                 if link_url:
                     if link_url.startswith(("http://", "https://")):
                         full_url = link_url
-                    elif link_url.startswith("/") and base_url:
-                        parsed = urlparse(base_url)
-                        base = f"{parsed.scheme}://{parsed.netloc}"
-                        full_url = urljoin(base, link_url)
+                    elif base_url:
+                        full_url = urljoin(base_url, link_url)
                     else:
                         full_url = link_url
 

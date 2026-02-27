@@ -37,10 +37,14 @@ def crawl(start_url: str, max_depth: int = MAX_DEPTH) -> list[tuple[str, str]]:
     home_yaml, _ = fetch_page_as_yaml(start_url)
     visited.add(start_url)
 
+    # --- Step A: Visit ALL primary links ---
+    league_pages: list[tuple[str, str]] = []
+
     # Check if home page itself has league data
     if has_league_data(home_yaml):
         logger.info(f"Home page has league data: {start_url}")
-        return [(start_url, home_yaml)]
+        league_pages.append((start_url, home_yaml))
+    # Always continue to Step A
 
     home_tree = yaml_lib.safe_load(home_yaml)
     all_home_links = parse_yaml_links(home_tree, start_url)
@@ -63,8 +67,6 @@ def crawl(start_url: str, max_depth: int = MAX_DEPTH) -> list[tuple[str, str]]:
         f"Home links: {len(primary_links)} primary, {len(secondary_links)} secondary"
     )
 
-    # --- Step A: Visit ALL primary links ---
-    league_pages: list[tuple[str, str]] = []
     primary_page_store: list[tuple[str, str]] = []  # for Step C
 
     for link in primary_links:

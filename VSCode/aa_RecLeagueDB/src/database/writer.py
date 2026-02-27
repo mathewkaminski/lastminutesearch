@@ -52,7 +52,6 @@ def _merge_league_records(existing_data: dict, new_data: dict) -> dict:
     # Always preserve existing identity fields
     merged["league_id"] = existing_data["league_id"]
     merged["created_at"] = existing_data.get("created_at", datetime.utcnow().isoformat())
-    merged["updated_at"] = datetime.utcnow().isoformat()
 
     # Recalculate quality score for the merged record
     merged["quality_score"] = calculate_quality_score(merged)
@@ -89,6 +88,11 @@ def insert_league(data: Dict[str, Any], metadata: Optional[Dict[str, Any]] = Non
     Returns:
         (league_id, is_new)
         is_new: True if inserted, False if updated/skipped
+        Returns (None, False) if new record is rejected by quality gate
+        (identifying_fields_pct < MIN_INSERT_IDENTIFYING_PCT threshold).
+        Note: identifying_fields_pct must be set by the caller (from the
+        extractor) for the quality gate to function — if absent, it defaults
+        to 0 and all new inserts are blocked.
 
     Raises:
         ValueError: If validation fails (missing required fields)
@@ -102,7 +106,7 @@ def insert_league(data: Dict[str, Any], metadata: Optional[Dict[str, Any]] = Non
     # Step 1: Validate
     is_valid, errors = validate_extracted_data(data)
     if not is_valid:
-        error_msg = f"Validation failed: {', '.join(errors)}"
+        error_msg = f"Validation failed: {', '.join(errors.get('errors', errors.get('missing_required', [])))}"
         logger.error(error_msg)
         raise ValueError(error_msg)
 
@@ -354,31 +358,6 @@ def _prepare_for_insert(data: Dict[str, Any], metadata: Optional[Dict[str, Any]]
 
     logger.debug(f"Prepared data: {list(prepared.keys())}")
     return prepared
-
-
-def _compare_quality(new_data: Dict[str, Any], existing_data: Dict[str, Any]) -> bool:
-    """Determine if new data is higher quality than existing.
-
-    Args:
-        new_data: New extracted data
-        existing_data: Existing database record
-
-    Returns:
-        True if new data should replace existing
-    """
-    new_quality = new_data.get("quality_score", 0)
-    existing_quality = existing_data.get("quality_score", 0)
-
-    if new_quality > existing_quality:
-        return True
-
-    # If equal, prefer newer
-    if new_quality == existing_quality:
-        new_created = new_data.get("created_at", "")
-        existing_created = existing_data.get("created_at", "")
-        return new_created > existing_created
-
-    return False
 
 
 def _store_vectors_for_league(

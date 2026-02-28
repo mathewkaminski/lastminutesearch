@@ -250,3 +250,30 @@ def test_crawl_skips_other_primary_pages():
     urls = [url for url, _ in result]
     assert "https://example.com/about" not in urls
     assert "https://example.com/leagues" in urls
+
+
+def test_crawl_deduplicates_hash_fragment_variants():
+    """URLs differing only in hash fragment (#section) are treated as the same page."""
+    # Home has two links to the same page — one with hash fragment, one without
+    home_yaml = _make_yaml([
+        ("/leagues", "Leagues"),
+        ("/leagues#section", "Leagues Section"),
+    ])
+    visited_urls = []
+
+    def fake_fetch(url, **kwargs):
+        visited_urls.append(url)
+        if url == "https://example.com":
+            return (home_yaml, {})
+        return (PRIMARY_LEAGUE_YAML, {})
+
+    with (
+        patch("src.scraper.smart_crawler.fetch_page_as_yaml", side_effect=fake_fetch),
+        patch("src.scraper.smart_crawler.classify_page", return_value="LEAGUE_DETAIL"),
+    ):
+        from src.scraper.smart_crawler import crawl
+        result = crawl("https://example.com")
+
+    # /leagues should only be fetched once (not once for /leagues and once for /leagues#section)
+    fetched_without_fragments = [u.split("#")[0] for u in visited_urls]
+    assert fetched_without_fragments.count("https://example.com/leagues") == 1

@@ -32,6 +32,11 @@ def _same_domain(url: str, base_url: str) -> bool:
         return False
 
 
+def _strip_fragment(url: str) -> str:
+    """Strip hash fragment from URL — treat /page and /page#section as the same resource."""
+    return url.split("#")[0]
+
+
 def _follow_index_links(
     index_url: str,
     index_yaml: str,
@@ -66,29 +71,31 @@ def _follow_index_links(
     candidates = []
     seen_candidates: set = set()
     for link in all_links:
-        if link.url in visited:
+        normalized = _strip_fragment(link.url)
+        if normalized in visited:
             continue
-        if link.url in seen_candidates:
+        if normalized in seen_candidates:
             continue
-        if not _same_domain(link.url, base_url):
+        if not _same_domain(normalized, base_url):
             continue
-        seen_candidates.add(link.url)
+        seen_candidates.add(normalized)
+        link.url = normalized  # fetch the clean URL
         candidates.append(link)
         if len(candidates) >= MAX_DETAIL_LINKS:
             break
 
     for link in candidates:
-        visited.add(link.url)
+        visited.add(link.url)  # already normalized above
         try:
             page_yaml, _ = fetch_page_as_yaml(link.url)
             page_type = classify_page(page_yaml)
 
             if page_type in ("LEAGUE_DETAIL", "SCHEDULE"):
-                logger.info(f"[Index→{page_type}] {link.url}")
+                logger.info(f"[Index->{page_type}] {link.url}")
                 league_pages.append((link.url, page_yaml))
 
             elif page_type == "LEAGUE_INDEX":
-                logger.info(f"[Index→INDEX depth={current_depth}] {link.url}")
+                logger.info(f"[Index->INDEX depth={current_depth}] {link.url}")
                 # Also collect the index page itself (partial data better than nothing)
                 league_pages.append((link.url, page_yaml))
                 if current_depth < max_index_depth:
@@ -127,7 +134,7 @@ def crawl(
     # --- Layer 0: Home page ---
     logger.info(f"Fetching home: {start_url}")
     home_yaml, _ = fetch_page_as_yaml(start_url)
-    visited.add(start_url)
+    visited.add(_strip_fragment(start_url))
 
     home_type = classify_page(home_yaml)
     if home_type == "LEAGUE_INDEX":
@@ -159,13 +166,15 @@ def crawl(
     else:
         scored_home = []
 
-    seen: set = {start_url}
+    seen: set = {_strip_fragment(start_url)}
     primary_links = []
     for link in scored_home:
-        if link.url in seen:
+        normalized = _strip_fragment(link.url)
+        if normalized in seen:
             continue
-        seen.add(link.url)
+        seen.add(normalized)
         if link.score >= 100:
+            link.url = normalized  # fetch the clean URL
             primary_links.append(link)
 
     logger.info(f"Home primary links: {len(primary_links)}")
@@ -174,7 +183,7 @@ def crawl(
     for link in primary_links:
         if link.url in visited:
             continue
-        visited.add(link.url)
+        visited.add(link.url)  # link.url is already normalized from above
         try:
             page_yaml, _ = fetch_page_as_yaml(link.url)
             page_type = classify_page(page_yaml)

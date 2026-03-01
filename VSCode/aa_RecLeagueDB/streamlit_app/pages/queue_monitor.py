@@ -73,8 +73,7 @@ def render():
     if status_filter == ['PENDING']:
         st.info(
             "Showing PENDING URLs by default. Use the **Status** filter above to see "
-            "completed, failed, or skipped runs. To remove a URL that shouldn't be "
-            "scraped, select it and use **Screen Selected** below.",
+            "completed, failed, or skipped runs.",
             icon="ℹ️",
         )
 

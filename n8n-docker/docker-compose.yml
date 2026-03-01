@@ -1,0 +1,124 @@
+# Compose v2 ignores 'version:'; omit to avoid warnings.
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [n8nnet]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  n8n:
+    image: n8nio/n8n:latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "5678:5678"
+    environment:
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      # DB
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+      - DB_POSTGRESDB_USER=${POSTGRES_USER}
+      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
+      # Base URLs (for OAuth/Webhooks)
+      - N8N_HOST=${N8N_HOST}
+      - N8N_PORT=${N8N_PORT}
+      - N8N_PROTOCOL=${N8N_PROTOCOL}
+      - WEBHOOK_URL=${WEBHOOK_URL}
+      - N8N_EDITOR_BASE_URL=${N8N_EDITOR_BASE_URL}
+      # Optional
+      - N8N_DIAGNOSTICS_ENABLED=${N8N_DIAGNOSTICS_ENABLED}
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=${N8N_VERSION_NOTIFICATIONS_ENABLED}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      # ADD THIS LINE TO MOUNT YOUR SERVICE ACCOUNT KEY:
+      - C:\Users\mathe\n8n-docker\key.json:/home/node/.n8n/service-account-key.json
+    user: "1000:1000"
+    networks: [n8nnet]
+
+  # ngrok for n8n — fixed domain, NO auth
+  ngrok_n8n:
+    image: ngrok/ngrok:latest
+    restart: unless-stopped
+    depends_on:
+      - n8n
+    command: >
+      http
+      --log=stdout
+      --domain=${N8N_HOST}
+      http://host.docker.internal:5678
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    ports:
+      - "4040:4040"   # Inspector for this tunnel -> http://localhost:4040/status
+    networks: [n8nnet]
+
+  # ngrok for Streamlit (host:8501) — fixed domain, WITH basic auth
+  ngrok_jam:
+    image: ngrok/ngrok:latest
+    restart: unless-stopped
+    command: >
+      http
+      --log=stdout
+      --domain=matkjam.ngrok.app
+      --basic-auth=JAM:Fall2025
+      http://host.docker.internal:8501
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+    ports:
+      - "4041:4040"   # Inspector for this tunnel -> http://localhost:4041/status
+    networks: [n8nnet]
+
+  # RecSportsDB Streamlit app — bind-mounted, port 8502 on host
+  recsports:
+    build: ../VSCode/aa_RecLeagueDB
+    restart: unless-stopped
+    ports:
+      - "8502:8501"
+    volumes:
+      - ../VSCode/aa_RecLeagueDB:/app
+    env_file:
+      - ../VSCode/aa_RecLeagueDB/.env
+    networks: [n8nnet]
+
+  # ngrok for RecSports — fixed domain, WITH basic auth
+  ngrok_recsports:
+    image: ngrok/ngrok:latest
+    restart: unless-stopped
+    depends_on:
+      - recsports
+    command: >
+      http
+      --log=stdout
+      --domain=recsportsdb.ngrok.app
+      --basic-auth=recsports:RecSports2026
+      http://host.docker.internal:8502
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN_RECSPORTS}
+    ports:
+      - "4042:4040"   # Inspector -> http://localhost:4042/status
+    networks: [n8nnet]
+
+volumes:
+  postgres_data:
+  n8n_data:
+
+networks:
+  n8nnet:
+
+

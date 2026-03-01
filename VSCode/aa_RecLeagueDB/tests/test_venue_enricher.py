@@ -72,6 +72,14 @@ def test_no_api_result_counts_as_failed(enricher, mock_places, mock_store):
     mock_store.save_venue.assert_not_called()
 
 
+def test_places_api_error_counts_as_failed(enricher, mock_places, mock_store):
+    from src.enrichers.places_client import PlacesAPIError
+    mock_places.search.side_effect = PlacesAPIError("REQUEST_DENIED")
+    summary = enricher.run()
+    assert summary["failed"] == 2
+    mock_store.save_venue.assert_not_called()
+
+
 def test_progress_callback_called_for_each_pair(enricher, mock_places):
     mock_places.search.return_value = GOOD_RESULT
     calls = []

@@ -1,7 +1,7 @@
 """Venue table read/write operations."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class VenueStore:
             "google_place_id": google_place_id,
             "confidence_score": confidence_score,
             "raw_api_response": raw_api_response,
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         result = (
             self.client.table("venues")
@@ -118,17 +118,20 @@ class VenueStore:
     def accept_venue(self, venue_id: str) -> None:
         """Mark a venue as manually verified."""
         self.client.table("venues").update(
-            {"manually_verified": True, "updated_at": datetime.utcnow().isoformat()}
+            {"manually_verified": True, "updated_at": datetime.now(timezone.utc).isoformat()}
         ).eq("venue_id", venue_id).execute()
 
     def update_venue_address(
         self, venue_id: str, address: str, lat: float | None, lng: float | None
     ) -> None:
         """Correct a venue's address (used in Edit flow)."""
-        self.client.table("venues").update({
+        payload = {
             "address": address,
-            "lat": lat,
-            "lng": lng,
             "manually_verified": True,
-            "updated_at": datetime.utcnow().isoformat(),
-        }).eq("venue_id", venue_id).execute()
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if lat is not None:
+            payload["lat"] = lat
+        if lng is not None:
+            payload["lng"] = lng
+        self.client.table("venues").update(payload).eq("venue_id", venue_id).execute()

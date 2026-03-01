@@ -21,6 +21,14 @@ PAGE_SIZE = 50
 def render():
     st.title("📋 Queue Monitor")
 
+    # ── Post-run summary banner ────────────────────────────────────────────
+    if 'run_summary' in st.session_state:
+        msg = st.session_state.pop('run_summary')
+        if 'error' in msg.lower():
+            st.warning(msg)
+        else:
+            st.success(msg)
+
     # ── Stats bar ─────────────────────────────────────────────────────────────
     stats = get_queue_stats()
     cols = st.columns(len(VALID_STATUSES))
@@ -145,7 +153,7 @@ def render():
             st.rerun()
 
     # ── Run scraper ───────────────────────────────────────────────────────────
-    if rows and 'scrape_id' in pd.DataFrame(rows).columns:
+    if rows and 'scrape_id' in df.columns:
         st.markdown("**▶ Scrape selected URLs**")
         if st.button(
             f"▶ Run {len(selected_ids)} Selected",
@@ -171,12 +179,17 @@ def render():
                         result = scraper_run(url, dry_run=False)
                         written = result.get('leagues_written', 0)
                         errors = result.get('errors', [])
-                        new_status = (
-                            'FAILED' if (written == 0 and errors) else 'COMPLETED'
-                        )
+                        if written == 0 and not errors:
+                            new_status = 'SKIPPED'
+                        elif written == 0 and errors:
+                            new_status = 'FAILED'
+                        else:
+                            new_status = 'COMPLETED'
                         update_scrape_result(sid, new_status)
                         total_leagues += written
-                        if errors:
+                        if written == 0 and not errors:
+                            st.write(f"⚠️ **{url}** — 0 leagues found")
+                        elif errors:
                             total_errors += len(errors)
                             icon = '✅' if written > 0 else '❌'
                             st.write(
@@ -205,6 +218,7 @@ def render():
                     state="complete" if total_errors == 0 else "error",
                     expanded=True,
                 )
+            st.session_state['run_summary'] = summary
             st.rerun()
 
     st.divider()

@@ -172,3 +172,30 @@ def bulk_update_by_filter(
         .execute()
     )
     return len(update_result.data or [])
+
+
+def update_scrape_result(scrape_id: str, new_status: str) -> None:
+    """Set status and increment scrape_attempts after a scrape job finishes.
+
+    Two DB calls: fetch current attempts, then update status + incremented count.
+    Safe for concurrent use at the small queue sizes this app targets.
+
+    Args:
+        scrape_id: UUID of the scrape_queue row
+        new_status: 'COMPLETED' or 'FAILED'
+    """
+    client = get_client()
+
+    # Fetch current attempt count
+    row = (
+        client.table('scrape_queue')
+        .select('scrape_attempts')
+        .eq('scrape_id', scrape_id)
+        .execute()
+    )
+    current = (row.data[0].get('scrape_attempts') or 0) if row.data else 0
+
+    client.table('scrape_queue').update({
+        'status': new_status,
+        'scrape_attempts': current + 1,
+    }).eq('scrape_id', scrape_id).execute()

@@ -160,3 +160,27 @@ def test_bulk_update_by_filter_updates_all_matched_rows():
         n = bulk_update_by_filter(status_filter=['FAILED'], new_status='PENDING')
 
     assert n == 3
+
+
+# ── update_scrape_result ─────────────────────────────────────────────────────
+
+def test_update_scrape_result_sets_status_and_increments_attempts():
+    """Sets new status and increments scrape_attempts by 1."""
+    mock_client, mock_builder, _ = _make_builder(data=[{'scrape_attempts': 2}])
+    with patch('src.database.queue_viewer.get_client', return_value=mock_client):
+        from src.database.queue_viewer import update_scrape_result
+        update_scrape_result('scrape-id-1', 'COMPLETED')
+    mock_builder.update.assert_called_once()
+    call_payload = mock_builder.update.call_args[0][0]
+    assert call_payload['status'] == 'COMPLETED'
+    assert call_payload['scrape_attempts'] == 3   # 2 + 1
+
+
+def test_update_scrape_result_handles_null_attempts():
+    """scrape_attempts=None in DB is treated as 0."""
+    mock_client, mock_builder, _ = _make_builder(data=[{'scrape_attempts': None}])
+    with patch('src.database.queue_viewer.get_client', return_value=mock_client):
+        from src.database.queue_viewer import update_scrape_result
+        update_scrape_result('scrape-id-1', 'FAILED')
+    call_payload = mock_builder.update.call_args[0][0]
+    assert call_payload['scrape_attempts'] == 1   # None → 0, then +1

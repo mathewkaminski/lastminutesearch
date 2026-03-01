@@ -200,3 +200,42 @@ def update_scrape_result(scrape_id: str, new_status: str) -> None:
         'scrape_attempts': current + 1,
         'updated_at': datetime.now(timezone.utc).isoformat(),
     }).eq('scrape_id', scrape_id).execute()
+
+
+def screen_urls(scrape_ids: list, urls: list, reason: str) -> int:
+    """Delete screened URLs from scrape_queue and flag them in search_results.
+
+    Two DB calls: DELETE from scrape_queue, then UPDATE search_results so
+    the URLs won't resurface in future campaign dedup checks.
+
+    Args:
+        scrape_ids: List of scrape_id UUIDs to delete from scrape_queue
+        urls: Corresponding canonical URL strings (for updating search_results)
+        reason: Screening reason — one of: sub_page, social_media,
+                professional_sports, manually_screened
+
+    Returns:
+        Number of rows deleted from scrape_queue
+    """
+    if not scrape_ids:
+        return 0
+
+    client = get_client()
+
+    # Step 1: Delete from scrape_queue
+    delete_result = (
+        client.table('scrape_queue')
+        .delete()
+        .in_('scrape_id', scrape_ids)
+        .execute()
+    )
+    deleted = len(delete_result.data or [])
+
+    # Step 2: Flag in search_results so dedup checks prevent re-adding
+    if urls:
+        client.table('search_results').update({
+            'validation_status': 'FAILED',
+            'validation_reason': reason,
+        }).in_('url_canonical', urls).execute()
+
+    return deleted

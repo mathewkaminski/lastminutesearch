@@ -184,3 +184,66 @@ def test_update_scrape_result_handles_null_attempts():
         update_scrape_result('scrape-id-1', 'FAILED')
     call_payload = mock_builder.update.call_args[0][0]
     assert call_payload['scrape_attempts'] == 1   # None → 0, then +1
+
+
+# ── screen_urls ──────────────────────────────────────────────────────────────
+
+def test_screen_urls_empty_list_returns_zero_without_db_call():
+    """Empty ID list skips DB entirely."""
+    mock_client, _, _ = _make_builder(data=[])
+    with patch('src.database.queue_viewer.get_client', return_value=mock_client):
+        from src.database.queue_viewer import screen_urls
+        result = screen_urls([], [], 'sub_page')
+    assert result == 0
+    mock_client.table.assert_not_called()
+
+
+def test_screen_urls_deletes_from_scrape_queue():
+    """Calls .delete() on scrape_queue with matching scrape_ids."""
+    ids = ['id-1', 'id-2']
+    urls = ['https://a.com', 'https://b.com']
+    mock_builder = MagicMock()
+    for method in ['select', 'eq', 'in_', 'or_', 'order', 'range',
+                   'ilike', 'update', 'delete', 'neq']:
+        getattr(mock_builder, method).return_value = mock_builder
+    mock_result = MagicMock()
+    mock_result.data = [{'scrape_id': 'id-1'}, {'scrape_id': 'id-2'}]
+    mock_result.count = 2
+    mock_builder.execute.return_value = mock_result
+    mock_client = MagicMock()
+    mock_client.table.return_value = mock_builder
+
+    with patch('src.database.queue_viewer.get_client', return_value=mock_client):
+        from src.database.queue_viewer import screen_urls
+        n = screen_urls(ids, urls, 'sub_page')
+
+    mock_builder.delete.assert_called_once()
+    mock_builder.in_.assert_any_call('scrape_id', ids)
+    assert n == 2
+
+
+def test_screen_urls_updates_search_results_with_reason():
+    """Updates search_results validation_status and validation_reason."""
+    ids = ['id-1']
+    urls = ['https://a.com']
+    mock_builder = MagicMock()
+    for method in ['select', 'eq', 'in_', 'or_', 'order', 'range',
+                   'ilike', 'update', 'delete', 'neq']:
+        getattr(mock_builder, method).return_value = mock_builder
+    delete_result = MagicMock()
+    delete_result.data = [{'scrape_id': 'id-1'}]
+    update_result = MagicMock()
+    update_result.data = [{'result_id': 'r-1'}]
+    mock_builder.execute.side_effect = [delete_result, update_result]
+    mock_client = MagicMock()
+    mock_client.table.return_value = mock_builder
+
+    with patch('src.database.queue_viewer.get_client', return_value=mock_client):
+        from src.database.queue_viewer import screen_urls
+        screen_urls(ids, urls, 'social_media')
+
+    update_calls = mock_builder.update.call_args_list
+    assert len(update_calls) == 1
+    payload = update_calls[0][0][0]
+    assert payload['validation_status'] == 'FAILED'
+    assert payload['validation_reason'] == 'social_media'

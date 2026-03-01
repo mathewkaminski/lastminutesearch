@@ -18,6 +18,13 @@ from src.search import SearchOrchestrator
 
 PAGE_SIZE = 50
 
+SCREEN_REASONS = {
+    'Sub-Page': 'sub_page',
+    'Social Media': 'social_media',
+    'Pro Team': 'professional_sports',
+    'Other': 'manually_screened',
+}
+
 
 def render():
     st.title("📋 Queue Monitor")
@@ -234,12 +241,6 @@ def render():
         st.markdown("**🚫 Screen selected URLs**")
         sc1, sc2 = st.columns([2, 1])
         with sc1:
-            SCREEN_REASONS = {
-                'Sub-Page': 'sub_page',
-                'Social Media': 'social_media',
-                'Pro Team': 'professional_sports',
-                'Other': 'manually_screened',
-            }
             screen_reason_label = st.selectbox(
                 "Reason",
                 list(SCREEN_REASONS.keys()),
@@ -257,12 +258,15 @@ def render():
         if screen_clicked:
             selected_urls = df[df['scrape_id'].isin(selected_ids)]['url'].tolist()
             reason_code = SCREEN_REASONS[screen_reason_label]
-            n = screen_urls(selected_ids, selected_urls, reason_code)
-            st.success(
-                f"Screened {n} URL(s) as '{screen_reason_label}' — "
-                "removed from queue and flagged in search results."
-            )
-            st.rerun()
+            try:
+                n = screen_urls(selected_ids, selected_urls, reason_code)
+                st.success(
+                    f"Screened {n} URL(s) as '{screen_reason_label}' — "
+                    "removed from queue and flagged in search results."
+                )
+                st.rerun()
+            except Exception as exc:
+                st.error(f"❌ Screen failed: {str(exc)[:200]}")
 
     st.divider()
 

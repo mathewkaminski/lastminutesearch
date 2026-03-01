@@ -61,7 +61,7 @@ def test_accept_venue_sets_manually_verified(store, mock_client):
 
 
 def test_get_unenriched_pairs_returns_distinct_pairs(store, mock_client):
-    mock_client.table.return_value.select.return_value.is_.return_value.not_.return_value.is_.return_value.execute.return_value.data = [
+    mock_client.table.return_value.select.return_value.is_.return_value.not_.is_.return_value.not_.is_.return_value.execute.return_value.data = [
         {"venue_name": "Park A", "city": "Toronto"},
         {"venue_name": "Park B", "city": "Ottawa"},
     ]

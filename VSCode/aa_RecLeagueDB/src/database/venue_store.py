@@ -62,15 +62,13 @@ class VenueStore:
             self.client.table("leagues_metadata")
             .select("venue_name, city")
             .is_("venue_id", "null")
-            .not_()
-            .is_("venue_name", "null")
+            .not_.is_("venue_name", "null")
+            .not_.is_("city", "null")
             .execute()
         )
         seen = set()
         pairs = []
         for row in result.data:
-            if not row.get("city"):
-                continue
             key = (row["venue_name"], row["city"])
             if key not in seen:
                 seen.add(key)

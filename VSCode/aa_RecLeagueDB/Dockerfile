@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY requirements-streamlit.txt .
 RUN pip install --no-cache-dir -r requirements-streamlit.txt
+RUN playwright install chromium --with-deps
 
 EXPOSE 8501
 

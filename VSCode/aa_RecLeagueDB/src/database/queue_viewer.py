@@ -233,9 +233,18 @@ def screen_urls(scrape_ids: list, urls: list, reason: str) -> int:
 
     # Step 2: Flag in search_results so dedup checks prevent re-adding
     if urls:
-        client.table('search_results').update({
-            'validation_status': 'FAILED',
-            'validation_reason': reason,
-        }).in_('url_canonical', urls).execute()
+        try:
+            client.table('search_results').update({
+                'validation_status': 'FAILED',
+                'validation_reason': reason,
+            }).in_('url_canonical', urls).execute()
+        except Exception:
+            logger.error(
+                'screen_urls: Step 1 (delete) succeeded but Step 2 (flag search_results) '
+                'failed. The following URLs were removed from scrape_queue but are NOT '
+                'flagged in search_results and may resurface: %s',
+                urls,
+            )
+            raise
 
     return deleted

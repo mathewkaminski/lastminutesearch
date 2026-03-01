@@ -11,7 +11,7 @@ def _make_builder(data=None, count=0):
     chain works without additional setup.
     """
     mock_builder = MagicMock()
-    for method in ['select', 'eq', 'in_', 'or_', 'order', 'range', 'ilike', 'update', 'neq']:
+    for method in ['select', 'eq', 'in_', 'or_', 'order', 'range', 'ilike', 'update', 'delete', 'neq']:
         getattr(mock_builder, method).return_value = mock_builder
 
     mock_result = MagicMock()
@@ -143,7 +143,7 @@ def test_bulk_update_by_filter_updates_all_matched_rows():
     updated = [{'scrape_id': 'id-1'}, {'scrape_id': 'id-2'}, {'scrape_id': 'id-3'}]
 
     mock_builder = MagicMock()
-    for method in ['select', 'eq', 'in_', 'or_', 'order', 'range', 'ilike', 'update', 'neq']:
+    for method in ['select', 'eq', 'in_', 'or_', 'order', 'range', 'ilike', 'update', 'delete', 'neq']:
         getattr(mock_builder, method).return_value = mock_builder
 
     select_result = MagicMock()
@@ -247,3 +247,17 @@ def test_screen_urls_updates_search_results_with_reason():
     payload = update_calls[0][0][0]
     assert payload['validation_status'] == 'FAILED'
     assert payload['validation_reason'] == 'social_media'
+
+
+def test_screen_urls_skips_search_results_update_when_urls_empty():
+    """Non-empty scrape_ids with empty urls — delete runs, update is skipped."""
+    ids = ['id-1']
+    mock_client, mock_builder, _ = _make_builder(
+        data=[{'scrape_id': 'id-1'}]
+    )
+    with patch('src.database.queue_viewer.get_client', return_value=mock_client):
+        from src.database.queue_viewer import screen_urls
+        n = screen_urls(ids, [], 'sub_page')
+    assert n == 1
+    mock_builder.delete.assert_called_once()
+    mock_builder.update.assert_not_called()

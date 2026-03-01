@@ -41,7 +41,7 @@ def render():
     fc1, fc2, fc3 = st.columns([2, 1, 2])
     with fc1:
         status_filter = st.multiselect(
-            "Status", VALID_STATUSES, default=['PENDING', 'FAILED']
+            "Status", VALID_STATUSES, default=['PENDING']
         )
     with fc2:
         priority_filter = st.multiselect("Priority", [1, 2, 3])
@@ -70,6 +70,13 @@ def render():
     st.caption(
         f"{total} rows total | Page {st.session_state.queue_page + 1} of {total_pages}"
     )
+    if status_filter == ['PENDING']:
+        st.info(
+            "Showing PENDING URLs by default. Use the **Status** filter above to see "
+            "completed, failed, or skipped runs. To remove a URL that shouldn't be "
+            "scraped, select it and use **Screen Selected** below.",
+            icon="ℹ️",
+        )
 
     # ── Table with checkbox selection ─────────────────────────────────────────
     selected_ids = []

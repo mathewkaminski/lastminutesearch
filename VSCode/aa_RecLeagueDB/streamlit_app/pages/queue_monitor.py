@@ -10,6 +10,7 @@ from src.database.queue_viewer import (
     get_queue_row_count,
     get_queue_rows,
     get_queue_stats,
+    screen_urls,
     update_scrape_result,
 )
 from src.database.supabase_client import get_client
@@ -73,7 +74,8 @@ def render():
     if status_filter == ['PENDING']:
         st.info(
             "Showing PENDING URLs by default. Use the **Status** filter above to see "
-            "completed, failed, or skipped runs.",
+            "completed, failed, or skipped runs. To remove a URL that shouldn't be "
+            "scraped, select it and use **Screen Selected** below.",
             icon="ℹ️",
         )
 
@@ -225,6 +227,41 @@ def render():
                     expanded=True,
                 )
             st.session_state['run_summary'] = summary
+            st.rerun()
+
+    # ── Screen selected URLs ──────────────────────────────────────────────────
+    if rows and 'scrape_id' in df.columns and 'url' in df.columns:
+        st.markdown("**🚫 Screen selected URLs**")
+        sc1, sc2 = st.columns([2, 1])
+        with sc1:
+            SCREEN_REASONS = {
+                'Sub-Page': 'sub_page',
+                'Social Media': 'social_media',
+                'Pro Team': 'professional_sports',
+                'Other': 'manually_screened',
+            }
+            screen_reason_label = st.selectbox(
+                "Reason",
+                list(SCREEN_REASONS.keys()),
+                key="screen_reason",
+            )
+        with sc2:
+            st.write("")  # vertical alignment spacer
+            st.write("")
+            screen_clicked = st.button(
+                f"🚫 Screen {len(selected_ids)} Selected",
+                disabled=not selected_ids,
+                key="screen_selected",
+            )
+
+        if screen_clicked:
+            selected_urls = df[df['scrape_id'].isin(selected_ids)]['url'].tolist()
+            reason_code = SCREEN_REASONS[screen_reason_label]
+            n = screen_urls(selected_ids, selected_urls, reason_code)
+            st.success(
+                f"Screened {n} URL(s) as '{screen_reason_label}' — "
+                "removed from queue and flagged in search results."
+            )
             st.rerun()
 
     st.divider()

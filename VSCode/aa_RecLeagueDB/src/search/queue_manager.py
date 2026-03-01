@@ -1,7 +1,6 @@
 """Queue management: add validated URLs to scrape queue with deduplication."""
 
 import logging
-from typing import Optional
 from src.database.supabase_client import get_client
 from src.search.url_validator import canonicalize_url
 
@@ -18,7 +17,7 @@ def add_to_scrape_queue(
     """Add validated URL to scrape queue with deduplication checks.
 
     Three-level deduplication:
-    1. Already in scrape_queue?
+    1. Already in scrape_queue with PENDING or IN_PROGRESS status?
     2. Already in leagues_metadata (already scraped)?
     3. If either: skip but mark result as queued anyway
 
@@ -94,7 +93,7 @@ def add_to_scrape_queue(
         # Still mark result as queued even if DB operation fails
         try:
             mark_result_queued(result_id)
-        except:
+        except Exception:
             pass
         raise
 

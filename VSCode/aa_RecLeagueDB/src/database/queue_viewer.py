@@ -198,4 +198,5 @@ def update_scrape_result(scrape_id: str, new_status: str) -> None:
     client.table('scrape_queue').update({
         'status': new_status,
         'scrape_attempts': current + 1,
+        'updated_at': datetime.now(timezone.utc).isoformat(),
     }).eq('scrape_id', scrape_id).execute()

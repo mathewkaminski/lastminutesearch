@@ -10,6 +10,7 @@ from src.database.queue_viewer import (
     get_queue_row_count,
     get_queue_rows,
     get_queue_stats,
+    update_scrape_result,
 )
 from src.database.supabase_client import get_client
 from src.search import SearchOrchestrator
@@ -141,6 +142,69 @@ def render():
         ):
             n = bulk_update_by_filter(sf, pf, st_val, bulk_new_status)
             st.success(f"Updated {n} rows")
+            st.rerun()
+
+    # ── Run scraper ───────────────────────────────────────────────────────────
+    if rows and 'scrape_id' in pd.DataFrame(rows).columns:
+        st.markdown("**▶ Scrape selected URLs**")
+        if st.button(
+            f"▶ Run {len(selected_ids)} Selected",
+            disabled=not selected_ids,
+            type="primary",
+            key="run_scraper",
+        ):
+            from scripts.smart_scraper import run as scraper_run
+
+            selected_df = df[df['scrape_id'].isin(selected_ids)][['scrape_id', 'url']]
+            total_leagues = 0
+            total_errors = 0
+
+            with st.status(
+                f"Running {len(selected_ids)} URL(s)...", expanded=True
+            ) as run_status:
+                for _, row in selected_df.iterrows():
+                    sid = row['scrape_id']
+                    url = row['url']
+                    run_status.update(label=f"Running: {url[:70]}...")
+                    bulk_update_status([sid], 'IN_PROGRESS')
+                    try:
+                        result = scraper_run(url, dry_run=False)
+                        written = result.get('leagues_written', 0)
+                        errors = result.get('errors', [])
+                        new_status = (
+                            'FAILED' if (written == 0 and errors) else 'COMPLETED'
+                        )
+                        update_scrape_result(sid, new_status)
+                        total_leagues += written
+                        if errors:
+                            total_errors += len(errors)
+                            icon = '✅' if written > 0 else '❌'
+                            st.write(
+                                f"{icon} **{url}** — "
+                                f"{written} league(s) written, {len(errors)} error(s)"
+                            )
+                            for err in errors:
+                                st.caption(f"  ↳ {err[:120]}")
+                        else:
+                            st.write(
+                                f"✅ **{url}** — {written} league(s) written"
+                            )
+                    except Exception as exc:
+                        update_scrape_result(sid, 'FAILED')
+                        total_errors += 1
+                        st.write(f"❌ **{url}** — {str(exc)[:120]}")
+
+                summary = (
+                    f"Done — {total_leagues} league(s) written "
+                    f"across {len(selected_ids)} URL(s)"
+                )
+                if total_errors:
+                    summary += f", {total_errors} error(s)"
+                run_status.update(
+                    label=summary,
+                    state="complete" if total_errors == 0 else "error",
+                    expanded=True,
+                )
             st.rerun()
 
     st.divider()

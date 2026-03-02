@@ -1,5 +1,11 @@
 """Utility for extracting the base domain from a URL."""
+import logging
+import re
 from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
+
+_IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 
 
 def extract_base_domain(url: str | None) -> str:
@@ -26,10 +32,14 @@ def extract_base_domain(url: str | None) -> str:
         # Strip www. prefix
         if netloc.startswith("www."):
             netloc = netloc[4:]
+        # Skip subdomain stripping for IP addresses
+        if _IP_RE.match(netloc):
+            return netloc
         # Keep only last two parts of subdomain (e.g. register.zogculture.com -> zogculture.com)
         parts = netloc.split(".")
         if len(parts) > 2:
             netloc = ".".join(parts[-2:])
         return netloc.lower()
     except Exception:
+        logger.debug("extract_base_domain failed for %r", url, exc_info=True)
         return ""

@@ -47,6 +47,7 @@ PAGES = {
     "📊 Data Quality":           ("manage",  "data_quality"),
     "🔀 Merge Tool":             ("manage",  "merge_tool"),
     "📍 Venues Enricher":        ("manage",  "venues_enricher"),
+    "🏢 Org View":               ("manage",  "org_view"),
 }
 
 with st.sidebar:
@@ -56,7 +57,7 @@ with st.sidebar:
         if st.button(label, key=f"nav_{label}", use_container_width=True):
             st.session_state.current_page = label
     st.caption("── Data Management ──")
-    for label in ["🗂️ Leagues Viewer", "📊 Data Quality", "🔀 Merge Tool", "📍 Venues Enricher"]:
+    for label in ["🗂️ Leagues Viewer", "📊 Data Quality", "🔀 Merge Tool", "📍 Venues Enricher", "🏢 Org View"]:
         if st.button(label, key=f"nav_{label}", use_container_width=True):
             st.session_state.current_page = label
 
@@ -120,6 +121,13 @@ elif module_name == "merge_tool":
 elif module_name == "venues_enricher":
     from pages import venues_enricher
     venues_enricher.render()
+
+elif module_name == "org_view":
+    try:
+        from pages import org_view
+        org_view.render()
+    except ImportError:
+        st.info("🏢 Org View — coming soon.")
 
 st.divider()
 st.markdown(

@@ -152,6 +152,8 @@ def render() -> None:
 
             for url, url_rows in visible_urls.items():
                 current_type = url_rows[0].get("listing_type") or "unknown"
+                if current_type not in _LISTING_OPTIONS:
+                    current_type = "unknown"
                 label = _LISTING_LABELS.get(current_type, current_type)
                 col_url, col_type, col_edit = st.columns([5, 2, 2])
                 col_url.markdown(f"`{url[:70]}`  ({len(url_rows)} record{'s' if len(url_rows) != 1 else ''})")

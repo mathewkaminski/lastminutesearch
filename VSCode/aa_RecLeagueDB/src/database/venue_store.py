@@ -3,6 +3,8 @@
 import logging
 from datetime import datetime, timezone
 
+from src.config.sss_codes import SPORT_CODES
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,7 +48,11 @@ class VenueStore:
         return result.data[0]["venue_id"]
 
     def link_leagues(self, venue_id: str, venue_name: str, city: str) -> int:
-        """Set venue_id on all leagues with matching venue_name + city."""
+        """Set venue_id on all leagues with matching venue_name + city.
+
+        Also aggregates distinct sports and days_of_week from linked leagues
+        and writes them back to the venue record.
+        """
         result = (
             self.client.table("leagues_metadata")
             .update({"venue_id": venue_id})
@@ -54,7 +60,28 @@ class VenueStore:
             .eq("city", city)
             .execute()
         )
-        return len(result.data)
+        linked = result.data or []
+
+        # Aggregate sports (human-readable) and days from linked leagues
+        sports = sorted({
+            SPORT_CODES.get((r.get("sport_season_code") or "")[-2:], "")
+            for r in linked
+            if r.get("sport_season_code") and len(r["sport_season_code"]) == 3
+        } - {""})
+
+        days = sorted({
+            r["day_of_week"] for r in linked
+            if r.get("day_of_week")
+        })
+
+        if sports or days:
+            self.client.table("venues").update({
+                "sports": sports or None,
+                "days_of_week": days or None,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("venue_id", venue_id).execute()
+
+        return len(linked)
 
     def get_unenriched_pairs(self) -> list[tuple[str, str]]:
         """Return distinct (venue_name, city) pairs not yet linked to a venue."""

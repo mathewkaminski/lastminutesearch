@@ -102,3 +102,11 @@
 - **Real-time web scraping (monitor for schedule changes)**
 - **User-submitted league data**
 - **Mobile app for league search**
+
+## League Checker — Deferred Features
+
+- **History tab** — trend view showing num_teams over time per league (requires multiple check runs)
+- **Auto-scheduling / cron runs** — schedule bulk checks rather than manual trigger
+- **Accept changes button** — write confirmed new_num_teams back to leagues_metadata
+- **Bulk check all** — one-button run across all leagues, not just selected URLs
+- **Iframe / login-gated content** — handle sites that require auth or use iframes for standings

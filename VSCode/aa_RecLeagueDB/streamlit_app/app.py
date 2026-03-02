@@ -41,6 +41,7 @@ PAGES = {
     "🎯 Campaign Manager":       ("search",  "campaign_manager"),
     "📋 Queue Monitor":          ("search",  "queue_monitor"),
     "🕷️ Scraper UI":             ("search",  "scraper_ui"),
+    "🔍 League Checker":         ("search",  "league_checker"),
     # Data Management
     "🗂️ Leagues Viewer":         ("manage",  "leagues_viewer"),
     "📊 Data Quality":           ("manage",  "data_quality"),
@@ -51,7 +52,7 @@ PAGES = {
 with st.sidebar:
     st.title("Navigation")
     st.caption("── Search Pipeline ──")
-    for label in ["🎯 Campaign Manager", "📋 Queue Monitor", "🕷️ Scraper UI"]:
+    for label in ["🎯 Campaign Manager", "📋 Queue Monitor", "🕷️ Scraper UI", "🔍 League Checker"]:
         if st.button(label, key=f"nav_{label}", use_container_width=True):
             st.session_state.current_page = label
     st.caption("── Data Management ──")
@@ -84,6 +85,13 @@ elif module_name == "scraper_ui":
         scraper_ui.render()
     except ImportError:
         st.info("🕷️ Scraper UI is being built in a separate session. Check back soon.")
+
+elif module_name == "league_checker":
+    try:
+        from pages import league_checker
+        league_checker.render()
+    except ImportError:
+        st.info("🔍 League Checker — coming soon.")
 
 elif module_name == "leagues_viewer":
     try:

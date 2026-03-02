@@ -64,8 +64,13 @@ def backfill(write: bool = False) -> None:
     # Batch upsert
     for i in range(0, len(to_update), BATCH_SIZE):
         batch = to_update[i:i + BATCH_SIZE]
-        client.table("leagues_metadata").upsert(batch, on_conflict="league_id").execute()
-        logger.info(f"  Updated batch {i // BATCH_SIZE + 1} ({len(batch)} records)")
+        batch_num = i // BATCH_SIZE + 1
+        try:
+            client.table("leagues_metadata").upsert(batch, on_conflict="league_id").execute()
+            logger.info(f"  Updated batch {batch_num} ({len(batch)} records)")
+        except Exception as exc:
+            logger.error(f"  Batch {batch_num} failed: {exc}")
+            raise
 
     logger.info("Backfill complete.")
 

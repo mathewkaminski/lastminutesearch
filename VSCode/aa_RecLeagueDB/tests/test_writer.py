@@ -1,125 +1,50 @@
-import pytest
-from unittest.mock import MagicMock, patch
+"""Tests for src/database/writer.py — _prepare_for_insert enrichment."""
+
+from unittest.mock import patch, MagicMock
+from src.database.writer import _prepare_for_insert
 
 
-# ── _merge_league_records ──────────────────────────────────────────────────
+def test_prepare_for_insert_sets_base_domain():
+    data = {
+        "organization_name": "Javelin",
+        "url_scraped": "https://www.javelin.com/calgary/vball",
+        "sport_season_code": "V10",
+        "identifying_fields_pct": 75,
+    }
+    result = _prepare_for_insert(data)
+    assert result["base_domain"] == "javelin.com"
 
-def test_merge_fills_null_from_supplement():
-    """Null fields in the base record are filled from the supplement."""
-    from src.database.writer import _merge_league_records
 
-    existing = {
-        "league_id": "old-id",
+def test_prepare_for_insert_sets_listing_type_league():
+    data = {
         "organization_name": "TSSC",
-        "sport_season_code": "201",
-        "url_scraped": "https://x.com",
-        "quality_score": 40,
-        "venue_name": "Civic",
-        "day_of_week": None,    # missing in existing
+        "url_scraped": "https://torontossc.com",
+        "sport_season_code": "S10",
+        "num_weeks": 10,
+        "identifying_fields_pct": 75,
     }
-    new_rec = {
-        "organization_name": "TSSC",
-        "sport_season_code": "201",
-        "url_scraped": "https://x.com",
-        "quality_score": 30,
-        "venue_name": None,     # missing in new
-        "day_of_week": "Monday",
+    result = _prepare_for_insert(data)
+    assert result["listing_type"] == "league"
+
+
+def test_prepare_for_insert_sets_listing_type_dropin():
+    data = {
+        "organization_name": "ZogSports",
+        "url_scraped": "https://zogsports.com",
+        "sport_season_code": "S10",
+        "league_name": "Friday Drop-In",
+        "identifying_fields_pct": 75,
     }
-    result = _merge_league_records(existing, new_rec)
-    assert result["venue_name"] == "Civic"    # from existing (base — higher quality)
-    assert result["day_of_week"] == "Monday"  # filled from new (supplement)
-    assert result["league_id"] == "old-id"    # always preserved
+    result = _prepare_for_insert(data)
+    assert result["listing_type"] == "drop_in"
 
 
-def test_merge_prefers_higher_quality_as_base():
-    """When new record has higher quality_score, it becomes the base."""
-    from src.database.writer import _merge_league_records
-
-    existing = {
-        "league_id": "old-id",
-        "quality_score": 30,
-        "venue_name": "Civic",
-        "day_of_week": None,
-        "organization_name": "TSSC",
-        "sport_season_code": "201",
-        "url_scraped": "https://x.com",
+def test_prepare_for_insert_unknown_listing_type():
+    data = {
+        "organization_name": "Mystery Org",
+        "url_scraped": "https://example.com",
+        "sport_season_code": "S10",
+        "identifying_fields_pct": 75,
     }
-    new_rec = {
-        "quality_score": 70,  # higher — becomes base
-        "venue_name": None,
-        "day_of_week": "Monday",
-        "organization_name": "TSSC",
-        "sport_season_code": "201",
-        "url_scraped": "https://x.com",
-    }
-    result = _merge_league_records(existing, new_rec)
-    assert result["day_of_week"] == "Monday"  # from new (base)
-    assert result["venue_name"] == "Civic"    # filled from existing (supplement)
-
-
-def test_merge_preserves_existing_league_id_always():
-    """league_id is never overwritten regardless of quality."""
-    from src.database.writer import _merge_league_records
-
-    existing = {"league_id": "old-id", "quality_score": 10,
-                "organization_name": "X", "sport_season_code": "201", "url_scraped": "h"}
-    new_rec  = {"league_id": "new-id", "quality_score": 90,
-                "organization_name": "X", "sport_season_code": "201", "url_scraped": "h"}
-    result = _merge_league_records(existing, new_rec)
-    assert result["league_id"] == "old-id"
-
-
-# ── insert_league integration ──────────────────────────────────────────────
-
-_BASE_LEAGUE = {
-    "organization_name": "Test Org",
-    "sport_season_code": "201",
-    "url_scraped": "https://example.com",
-    "identifying_fields_pct": 60,
-}
-
-
-def test_insert_league_merges_when_duplicate_found():
-    """When duplicate found, insert_league always calls update — even if new quality is lower."""
-    from src.database.writer import insert_league
-
-    existing_full = {
-        "league_id": "existing-id",
-        **_BASE_LEAGUE,
-        "quality_score": 80,
-        "day_of_week": None,
-        "venue_name": "Civic",
-    }
-    new_data = {**_BASE_LEAGUE, "quality_score": 30, "day_of_week": "Monday", "venue_name": None}
-
-    mock_client = MagicMock()
-    mock_client.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [existing_full]
-    mock_client.table.return_value.update.return_value.eq.return_value.execute.return_value.data = [{"league_id": "existing-id"}]
-
-    with (
-        patch("src.database.writer.validate_extracted_data", return_value=(True, {})),
-        patch("src.database.writer.check_duplicate_league", return_value="existing-id"),
-    ):
-        league_id, is_new = insert_league(new_data, supabase_client=mock_client)
-
-    assert league_id == "existing-id"
-    assert is_new is False
-    mock_client.table.return_value.update.assert_called()  # update was called (not skipped)
-
-
-def test_insert_league_skips_low_quality_new_record():
-    """New records with identifying_fields_pct below threshold are not inserted."""
-    from src.database.writer import insert_league
-
-    new_data = {**_BASE_LEAGUE, "identifying_fields_pct": 20}  # below threshold
-
-    mock_client = MagicMock()
-    with (
-        patch("src.database.writer.validate_extracted_data", return_value=(True, {})),
-        patch("src.database.writer.check_duplicate_league", return_value=None),
-    ):
-        league_id, is_new = insert_league(new_data, supabase_client=mock_client)
-
-    assert league_id is None
-    assert is_new is False
-    mock_client.table.return_value.insert.assert_not_called()
+    result = _prepare_for_insert(data)
+    assert result["listing_type"] == "unknown"

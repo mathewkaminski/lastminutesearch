@@ -11,6 +11,8 @@ from src.utils.league_id_generator import (
     check_duplicate_league,
     extract_season_year,
 )
+from src.utils.domain_extractor import extract_base_domain
+from src.utils.listing_classifier import classify_listing_type
 
 logger = logging.getLogger(__name__)
 
@@ -282,6 +284,11 @@ def _prepare_for_insert(data: Dict[str, Any], metadata: Optional[Dict[str, Any]]
             f"pages_scraped={page_types}"
         )
 
+    # Enrich with domain and listing type
+    prepared["base_domain"] = extract_base_domain(prepared.get("url_scraped"))
+    if not prepared.get("listing_type"):
+        prepared["listing_type"] = classify_listing_type(prepared)
+
     # Add timestamps
     now_iso = datetime.utcnow().isoformat()
     prepared["created_at"] = now_iso
@@ -349,6 +356,8 @@ def _prepare_for_insert(data: Dict[str, Any], metadata: Optional[Dict[str, Any]]
         "completeness_status",  # NEW: League-level completeness enum
         "identifying_fields_pct",  # NEW: % of 8 identifying fields
         "page_has_multi_leagues",  # NEW: Page-level quality flag
+        "base_domain",
+        "listing_type",
         "created_at",
         "updated_at",
         "is_archived",

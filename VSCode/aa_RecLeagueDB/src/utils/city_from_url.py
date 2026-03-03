@@ -140,7 +140,13 @@ def extract_city_from_url(url: str | None) -> str | None:
         return None
 
     for segment in segments:
+        # Exact match: "toronto" -> "Toronto"
         if segment in _CITY_SLUGS:
             return _CITY_SLUGS[segment]
+        # Prefix match: "edmonton-open-level-..." -> "Edmonton"
+        # Also handles two-word slugs: "north-york-volleyball" -> "North York"
+        for slug, city_name in _CITY_SLUGS.items():
+            if segment.startswith(slug + "-"):
+                return city_name
 
     return None

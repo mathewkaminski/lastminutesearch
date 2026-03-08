@@ -5,6 +5,27 @@ import sys
 import importlib
 from pathlib import Path
 
+import pdfplumber
+
+
+def extract_pages(pdf_path: str) -> list[dict]:
+    """Extract text and tables from every page of a PDF.
+
+    Returns list of:
+        {page_number: int, text: str, tables: list[list[list]]}
+    """
+    results = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for i, page in enumerate(pdf.pages):
+            text = page.extract_text() or ""
+            tables = page.extract_tables() or []
+            results.append({
+                "page_number": i + 1,
+                "text": text,
+                "tables": tables,
+            })
+    return results
+
 
 def check_deps(required: list[str] | None = None) -> list[str]:
     """Return list of install instructions for missing packages."""

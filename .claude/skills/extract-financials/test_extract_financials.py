@@ -57,3 +57,36 @@ def test_detect_financial_pages_excludes_non_financial():
     page_numbers = [f["page_number"] for f in financial]
     # Page 1 is a cover slide — should not appear
     assert 1 not in page_numbers
+
+
+def test_extract_page_data_structure():
+    """extract_page_data() returns tab_name, table rows, and notes list."""
+    from extract_financials import extract_pages, extract_page_data
+    pdf_path = r"C:\Users\mathe\OneDrive\Documents\Consulting\JAM\JAM - Investor Deck for Mat & Orin.pdf"
+    pages = extract_pages(pdf_path)
+    page_8 = next(p for p in pages if p["page_number"] == 8)
+    result = extract_page_data(page_8, tab_name="Financials 2022-2025")
+    assert result["tab_name"] == "Financials 2022-2025"
+    assert isinstance(result["table"], list)
+    assert len(result["table"]) > 0
+    assert isinstance(result["notes"], list)
+
+def test_extract_page_data_preserves_numbers():
+    """Numeric values like $9,470,051 are preserved exactly."""
+    from extract_financials import extract_pages, extract_page_data
+    pdf_path = r"C:\Users\mathe\OneDrive\Documents\Consulting\JAM\JAM - Investor Deck for Mat & Orin.pdf"
+    pages = extract_pages(pdf_path)
+    page_8 = next(p for p in pages if p["page_number"] == 8)
+    result = extract_page_data(page_8, tab_name="Financials 2022-2025")
+    all_values = [cell for row in result["table"] for cell in row]
+    assert any("9,470,051" in str(v) for v in all_values)
+
+def test_extract_page_data_captures_notes():
+    """Notes/bullet text is captured even when outside table boundaries."""
+    from extract_financials import extract_pages, extract_page_data
+    pdf_path = r"C:\Users\mathe\OneDrive\Documents\Consulting\JAM\JAM - Investor Deck for Mat & Orin.pdf"
+    pages = extract_pages(pdf_path)
+    page_8 = next(p for p in pages if p["page_number"] == 8)
+    result = extract_page_data(page_8, tab_name="Financials 2022-2025")
+    combined_notes = " ".join(result["notes"])
+    assert "fiscal year" in combined_notes.lower() or "August" in combined_notes

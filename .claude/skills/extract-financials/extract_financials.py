@@ -94,6 +94,68 @@ def detect_financial_pages(pages: list[dict]) -> list[dict]:
     return [r for r in results if r.get("has_financial_data")]
 
 
+EXTRACT_PROMPT = """You are extracting financial data from one page of an investor deck PDF.
+
+Page text:
+{page_text}
+
+Raw tables detected by pdfplumber (may be incomplete or garbled):
+{raw_tables}
+
+Instructions:
+1. Clean up any garbled characters (replace ? or replacement characters with the correct symbol).
+2. Preserve ALL numeric values EXACTLY as written (e.g., $9,470,051 not $9.47M).
+3. Reconstruct the table with proper headers. If there are grouped column headers
+   (e.g., "ACTUALS" spanning multiple years), represent them as an extra header row.
+4. Capture ALL notes and bullet points found anywhere on the page — even text that
+   is not inside a table. These go in the notes list.
+5. The tab_name must be 31 characters or fewer.
+
+Return ONLY valid JSON, no explanation:
+{{
+  "tab_name": "<descriptive name, max 31 chars>",
+  "table": [
+    ["col1", "col2", ...],
+    ["row1val1", "row1val2", ...]
+  ],
+  "notes": [
+    "Note text here.",
+    "Another note."
+  ]
+}}"""
+
+
+def extract_page_data(page: dict, tab_name: str) -> dict:
+    """Use Claude to extract structured table + notes from a single financial page.
+
+    Returns {tab_name, table: list[list[str]], notes: list[str]}
+    """
+    raw_tables_str = json.dumps(page["tables"], indent=2) if page["tables"] else "none detected"
+
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=4000,
+        messages=[{
+            "role": "user",
+            "content": EXTRACT_PROMPT.format(
+                page_text=page["text"],
+                raw_tables=raw_tables_str,
+            )
+        }]
+    )
+
+    raw = response.content[0].text.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+
+    result = json.loads(raw)
+    result["tab_name"] = tab_name
+    return result
+
+
 if __name__ == "__main__":
     missing = check_deps()
     if missing:

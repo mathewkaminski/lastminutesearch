@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 import pdfplumber
+import openpyxl
 
 
 def extract_pages(pdf_path: str) -> list[dict]:
@@ -154,6 +155,35 @@ def extract_page_data(page: dict, tab_name: str) -> dict:
     result = json.loads(raw)
     result["tab_name"] = tab_name
     return result
+
+
+def write_excel(pages_data: list[dict], output_path: str) -> None:
+    """Write extracted financial data to an Excel file.
+
+    Each page gets one worksheet. Layout:
+        A1...: table rows
+        (blank row)
+        "Notes:"
+        one note per row
+    """
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    for page in pages_data:
+        tab_name = page["tab_name"][:31]
+        ws = wb.create_sheet(title=tab_name)
+
+        for row in page["table"]:
+            ws.append([cell if cell is not None else "" for cell in row])
+
+        ws.append([])
+
+        if page["notes"]:
+            ws.append(["Notes:"])
+            for note in page["notes"]:
+                ws.append([note])
+
+    wb.save(output_path)
 
 
 if __name__ == "__main__":

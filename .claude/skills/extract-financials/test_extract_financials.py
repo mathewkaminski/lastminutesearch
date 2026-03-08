@@ -1,4 +1,6 @@
 import sys
+import tempfile
+import os
 from extract_financials import check_deps
 
 
@@ -90,3 +92,65 @@ def test_extract_page_data_captures_notes():
     result = extract_page_data(page_8, tab_name="Financials 2022-2025")
     combined_notes = " ".join(result["notes"])
     assert "fiscal year" in combined_notes.lower() or "August" in combined_notes
+
+
+def test_write_excel_creates_file():
+    """write_excel() creates an xlsx file at the given path."""
+    from extract_financials import write_excel
+    import openpyxl
+
+    pages_data = [
+        {
+            "tab_name": "Test Financials",
+            "table": [["Year", "Revenue"], ["2024", "$1,000,000"]],
+            "notes": ["This is a test note."]
+        }
+    ]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_path = os.path.join(tmpdir, "test_output.xlsx")
+        write_excel(pages_data, out_path)
+        assert os.path.exists(out_path)
+        wb = openpyxl.load_workbook(out_path)
+        assert "Test Financials" in wb.sheetnames
+
+def test_write_excel_table_content():
+    """write_excel() writes table rows starting at A1."""
+    from extract_financials import write_excel
+    import openpyxl
+
+    pages_data = [
+        {
+            "tab_name": "Revenue",
+            "table": [["Region", "2024"], ["Toronto", "$8,203,397"]],
+            "notes": ["Toronto is largest market."]
+        }
+    ]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_path = os.path.join(tmpdir, "test.xlsx")
+        write_excel(pages_data, out_path)
+        wb = openpyxl.load_workbook(out_path)
+        ws = wb["Revenue"]
+        assert ws["A1"].value == "Region"
+        assert ws["B2"].value == "$8,203,397"
+
+def test_write_excel_notes_below_table():
+    """Notes appear below table with a blank row separator."""
+    from extract_financials import write_excel
+    import openpyxl
+
+    pages_data = [
+        {
+            "tab_name": "Sheet1",
+            "table": [["Col1"], ["Val1"]],
+            "notes": ["First note.", "Second note."]
+        }
+    ]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_path = os.path.join(tmpdir, "test.xlsx")
+        write_excel(pages_data, out_path)
+        wb = openpyxl.load_workbook(out_path)
+        ws = wb["Sheet1"]
+        # Row 1: header, Row 2: data, Row 3: blank, Row 4: "Notes:", Row 5+: notes
+        assert ws["A4"].value == "Notes:"
+        assert ws["A5"].value == "First note."
+        assert ws["A6"].value == "Second note."

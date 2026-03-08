@@ -33,3 +33,27 @@ def test_extract_pages_includes_text():
     # Page 8 (index 7) has Revenue data in it
     page_8 = next(p for p in pages if p["page_number"] == 8)
     assert "Revenue" in page_8["text"]
+
+
+def test_detect_financial_pages_returns_subset():
+    """detect_financial_pages() returns only pages with financial data."""
+    from extract_financials import extract_pages, detect_financial_pages
+    pdf_path = r"C:\Users\mathe\OneDrive\Documents\Consulting\JAM\JAM - Investor Deck for Mat & Orin.pdf"
+    pages = extract_pages(pdf_path)
+    financial = detect_financial_pages(pages)
+    assert isinstance(financial, list)
+    # JAM deck has at least 4 financial pages
+    assert len(financial) >= 4
+    # Each result has required fields
+    assert all("page_number" in f for f in financial)
+    assert all("tab_name" in f for f in financial)
+
+def test_detect_financial_pages_excludes_non_financial():
+    """detect_financial_pages() does not include text-only slides."""
+    from extract_financials import extract_pages, detect_financial_pages
+    pdf_path = r"C:\Users\mathe\OneDrive\Documents\Consulting\JAM\JAM - Investor Deck for Mat & Orin.pdf"
+    pages = extract_pages(pdf_path)
+    financial = detect_financial_pages(pages)
+    page_numbers = [f["page_number"] for f in financial]
+    # Page 1 is a cover slide — should not appear
+    assert 1 not in page_numbers

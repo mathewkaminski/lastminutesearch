@@ -154,3 +154,36 @@ def test_write_excel_notes_below_table():
         assert ws["A4"].value == "Notes:"
         assert ws["A5"].value == "First note."
         assert ws["A6"].value == "Second note."
+
+
+def test_full_pipeline_jam_deck():
+    """End-to-end: JAM PDF produces xlsx with expected tabs."""
+    import subprocess
+    import openpyxl
+
+    pdf_path = r"C:\Users\mathe\OneDrive\Documents\Consulting\JAM\JAM - Investor Deck for Mat & Orin.pdf"
+    expected_xlsx = r"C:\Users\mathe\OneDrive\Documents\Consulting\JAM\JAM - Investor Deck for Mat & Orin_financials.xlsx"
+
+    # Clean up any prior output
+    if os.path.exists(expected_xlsx):
+        os.remove(expected_xlsx)
+
+    # Load API key into environment for subprocess
+    from pathlib import Path
+    env = os.environ.copy()
+    for line in Path(r"C:\Users\mathe\VSCode\aa_RecLeagueDB\.env").read_text().splitlines():
+        if "=" in line and not line.startswith("#"):
+            k, v = line.split("=", 1)
+            env[k.strip()] = v.strip()
+
+    result = subprocess.run(
+        ["python", "extract_financials.py", pdf_path],
+        capture_output=True, text=True, env=env,
+        cwd=r"C:\Users\mathe\.claude\skills\extract-financials"
+    )
+    assert result.returncode == 0, f"Script failed:\n{result.stderr}\n{result.stdout}"
+    assert os.path.exists(expected_xlsx), "Output file not created"
+
+    wb = openpyxl.load_workbook(expected_xlsx)
+    assert len(wb.sheetnames) >= 4, f"Expected >= 4 sheets, got: {wb.sheetnames}"
+    print(f"Created sheets: {wb.sheetnames}")

@@ -186,11 +186,57 @@ def write_excel(pages_data: list[dict], output_path: str) -> None:
     wb.save(output_path)
 
 
-if __name__ == "__main__":
+def main() -> None:
+    if len(sys.argv) < 2:
+        print("Usage: python extract_financials.py <path_to_pdf>")
+        sys.exit(1)
+
+    pdf_path = sys.argv[1]
+
+    if not Path(pdf_path).exists():
+        print(f"Error: file not found: {pdf_path}")
+        sys.exit(1)
+
+    if not pdf_path.lower().endswith(".pdf"):
+        print(f"Error: file must be a PDF: {pdf_path}")
+        sys.exit(1)
+
     missing = check_deps()
     if missing:
-        print("Missing dependencies. Run:")
+        print("Missing dependencies. Install with:")
         for cmd in missing:
             print(f"  {cmd}")
         sys.exit(1)
-    print("All dependencies present.")
+
+    print(f"Scanning {pdf_path}...")
+    pages = extract_pages(pdf_path)
+    print(f"  Found {len(pages)} pages total.")
+
+    print("Detecting financial pages with Claude...")
+    financial_pages_meta = detect_financial_pages(pages)
+    print(f"  Identified {len(financial_pages_meta)} financial pages:")
+    for meta in financial_pages_meta:
+        print(f"    Page {meta['page_number']}: {meta['tab_name']}")
+
+    pages_data = []
+    for meta in financial_pages_meta:
+        page_num = meta["page_number"]
+        tab_name = meta["tab_name"]
+        print(f"Extracting page {page_num}: {tab_name}...")
+        page = next(p for p in pages if p["page_number"] == page_num)
+        try:
+            data = extract_page_data(page, tab_name)
+            pages_data.append(data)
+        except Exception as e:
+            print(f"  Warning: failed to extract page {page_num}: {e}")
+
+    output_path = str(Path(pdf_path).with_name(
+        Path(pdf_path).stem + "_financials.xlsx"
+    ))
+    write_excel(pages_data, output_path)
+    print(f"\nDone. Output saved to: {output_path}")
+    print(f"Tabs created: {[p['tab_name'] for p in pages_data]}")
+
+
+if __name__ == "__main__":
+    main()

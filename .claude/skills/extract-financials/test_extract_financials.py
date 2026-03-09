@@ -73,15 +73,16 @@ def test_extract_page_data_structure():
     assert len(result["table"]) > 0
     assert isinstance(result["notes"], list)
 
-def test_extract_page_data_preserves_numbers():
-    """Numeric values like $9,470,051 are preserved exactly."""
+def test_extract_page_data_strips_currency_symbols():
+    """Numeric values like $9,470,051 are returned as plain numbers (9470051)."""
     from extract_financials import extract_pages, extract_page_data
     pdf_path = r"C:\Users\mathe\OneDrive\Documents\Consulting\JAM\JAM - Investor Deck for Mat & Orin.pdf"
     pages = extract_pages(pdf_path)
     page_8 = next(p for p in pages if p["page_number"] == 8)
     result = extract_page_data(page_8, tab_name="Financials 2022-2025")
     all_values = [cell for row in result["table"] for cell in row]
-    assert any("9,470,051" in str(v) for v in all_values)
+    assert any("9470051" in str(v) for v in all_values)
+    assert not any("$" in str(v) for v in all_values)
 
 def test_extract_page_data_captures_notes():
     """Notes/bullet text is captured even when outside table boundaries."""

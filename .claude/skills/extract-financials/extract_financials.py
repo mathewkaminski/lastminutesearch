@@ -105,7 +105,7 @@ Raw tables detected by pdfplumber (may be incomplete or garbled):
 
 Instructions:
 1. Clean up any garbled characters (replace ? or replacement characters with the correct symbol).
-2. Preserve ALL numeric values EXACTLY as written (e.g., $9,470,051 not $9.47M).
+2. For numeric values, strip currency symbols and output plain numbers (e.g., 9470051 for $9,470,051, remove commas too). Preserve percentages as decimals (e.g., 0.54 for 54%). Do NOT abbreviate (e.g., never write 9.47M).
 3. Reconstruct the table with proper headers. If there are grouped column headers
    (e.g., "ACTUALS" spanning multiple years), represent them as an extra header row.
 4. Capture ALL notes and bullet points found anywhere on the page — even text that

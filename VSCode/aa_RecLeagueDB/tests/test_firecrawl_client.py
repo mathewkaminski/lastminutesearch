@@ -49,3 +49,14 @@ def test_missing_api_key_raises():
     """Constructor raises if api_key is empty."""
     with pytest.raises(ValueError, match="api_key"):
         FirecrawlClient(api_key="")
+
+
+def test_scrape_raises_on_empty_markdown():
+    """success=True but empty markdown raises RuntimeError."""
+    client = FirecrawlClient(api_key="test-key")
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"success": True, "data": {"markdown": ""}}
+    with patch("requests.post", return_value=mock_response):
+        with pytest.raises(RuntimeError, match="Firecrawl returned no markdown"):
+            client.scrape("https://example.com")

@@ -90,6 +90,21 @@ def render():
 
             for chk in run_result.checks:
                 status = chk.get("status", "?")
+
+                if status == "SUPER_SCRAPED":
+                    sr = chk.get("super_scrape_result", {})
+                    st.success(
+                        f"Super scrape complete — "
+                        f"{sr.get('leagues_written', 0)} written, "
+                        f"{sr.get('archived', 0)} archived, "
+                        f"{sr.get('review_queued', 0)} queued for review, "
+                        f"{sr.get('auto_consolidated', 0)} auto-consolidated"
+                    )
+                    if sr.get("errors"):
+                        for err in sr["errors"]:
+                            st.caption(f"  Error: {err}")
+                    continue
+
                 color = {"MATCH": "✅", "CHANGED": "🔴", "NOT_FOUND": "⚠️", "ERROR": "❌"}.get(status, "?")
                 label = chk.get("division_name") or "League"
                 old_t = chk.get("old_num_teams", "–")

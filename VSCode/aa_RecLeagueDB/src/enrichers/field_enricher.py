@@ -71,7 +71,45 @@ class FieldEnricher:
         return [f for f in ENRICHABLE_FIELDS if league.get(f) is None]
 
     def _build_prompt(self, content: str, null_fields: list[str], leagues: list[dict]) -> str:
-        raise NotImplementedError("implemented in Task 3")
+        """Build a targeted extraction prompt for only the null fields."""
+        # Build league context block
+        context_lines = []
+        for i, lg in enumerate(leagues, 1):
+            known = {
+                k: v for k, v in lg.items()
+                if k in ("organization_name", "day_of_week", "gender_eligibility",
+                         "competition_level", "sport_season_code", "num_teams")
+                and v is not None
+            }
+            context_lines.append(f"  League {i}: {json.dumps(known)}")
+        league_context = "\n".join(context_lines) or "  (no context available)"
+
+        # Build output schema — only null fields
+        schema_lines = [f'      "{f}": <value or null>' for f in null_fields]
+        schema = ",\n".join(schema_lines)
+
+        return f"""You are a data extraction specialist for recreational sports leagues.
+
+TASK: Extract ONLY the fields listed in the OUTPUT SCHEMA from the page content below.
+Do not invent or guess values. Return null for any field not clearly stated on the page.
+
+KNOWN LEAGUE CONTEXT (already in database — use to match divisions):
+{league_context}
+
+OUTPUT SCHEMA — return a JSON array with one object per league:
+[
+  {{
+    "league_id": "<copy from context above>",
+{schema}
+  }}
+]
+
+Return ONLY valid JSON. No other text.
+
+PAGE CONTENT:
+{content}
+
+JSON Output:"""
 
     def _extract(self, content: str, null_fields: list[str], leagues: list[dict]) -> list[dict]:
         raise NotImplementedError("implemented in Task 4")

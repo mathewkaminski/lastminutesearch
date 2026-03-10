@@ -58,7 +58,18 @@ python scripts/extract_leagues_yaml.py https://ottawavolleysixes.com
 
 ## Scraping Stack (Fallback Cascade)
 
-**Strategy:** MCP agent for manual/complex sites, YAML pipeline for automated bulk, Firecrawl as last resort.
+**Strategy:** MCP agent for manual/complex sites, YAML pipeline for automated bulk, super scraper auto-triggered for low quality, Firecrawl as last resort.
+
+| Level | Script | Trigger | Description |
+|-------|--------|---------|-------------|
+| L0 | `mcp_agent_scraper.py` | Manual | Playwright MCP agent — manual/complex sites, run when L1 fails |
+| L1 | `extract_leagues_yaml.py` | Automated bulk | Standard: BFS YAML crawl, Haiku classify, Sonnet extract |
+| L1.5 | `super_scraper.py` | Auto (League Checker when `quality_score < 75`) | Two passes: deep YAML crawl (depth=4, link threshold=60) + Playwright team count verification. Reconciles against existing records; auto-archives THIN contradictions (`quality_score < 60`), queues BORDERLINE for review |
+| L2 | Firecrawl API | Last resort | Paid fallback — use only when L1/L1.5 both fail |
+
+**Quality threshold constants** (in `src/config/quality_thresholds.py`):
+- `DEEP_SCRAPE_THRESHOLD = 75` — League Checker triggers super scraper when any record is below this
+- `AUTO_REPLACE_THRESHOLD = 60` — Reconciler auto-archives existing record when contradicted at this quality level
 
 ### Level 0: Playwright MCP Agent (PRIMARY for manual/complex sites)
 - **Script:** `scripts/mcp_agent_scraper.py`
@@ -74,6 +85,14 @@ python scripts/extract_leagues_yaml.py https://ottawavolleysixes.com
 - **Cost:** Free (local execution)
 - **How:** Hardcoded link discovery (score-based), accessibility tree YAML, GPT-4o extraction
 - **Strengths:** Fast, no API cost for navigation, deterministic
+
+### Level 1.5: Super Scraper (AUTO-triggered by League Checker)
+- **Script:** `scripts/super_scraper.py`
+- **Use for:** Low-quality records (`quality_score < 75`) — triggered automatically by League Checker
+- **Pass 1:** `deep_crawl()` — BFS with depth=4, link score threshold=60, cache bypass
+- **Pass 2:** Playwright navigator for team count verification
+- **Reconciliation:** MERGE (no contradiction or high quality) / REPLACE (THIN + contradicted) / REVIEW (BORDERLINE + contradicted)
+- **CLI:** `python scripts/super_scraper.py --url https://... [--dry-run]`
 
 ### Level 2: Firecrawl API (Fallback Only)
 - **Use for:** Sites that defeat local Playwright (anti-bot, complex JavaScript)

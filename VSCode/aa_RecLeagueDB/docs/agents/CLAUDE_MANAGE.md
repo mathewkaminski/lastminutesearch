@@ -3,7 +3,7 @@
 **Purpose:** Data validation, quality scoring, deduplication, enrichment, re-scraping triggers
 **When to use:** After extraction, for data cleaning, when reviewing database quality
 **Related contexts:** Use [CLAUDE_EXTRACT.md](CLAUDE_EXTRACT.md) for initial scraping/extraction
-**Streamlit pages:** Leagues Viewer, Data Quality, Merge Tool (see section below)
+**Streamlit pages:** Leagues Viewer, Data Quality, URL Merge, League Merge (see section below)
 
 ---
 
@@ -155,26 +155,17 @@ FROM leagues_metadata;
 
 ## Quality Score Thresholds → Actions
 
-| Quality Score | Action | Priority |
-|--------------|--------|----------|
-| < 30 | Immediate manual review | CRITICAL |
-| 30-49 | Flag for re-scrape with enhanced extraction | HIGH |
-| 50-69 | Queue for optional enrichment (Tool 2) | MEDIUM |
-| 70-79 | Monitor, acceptable for POC | LOW |
-| ≥ 80 | No action needed | NONE |
+Quality bands are defined in `src/config/quality_thresholds.py`:
 
-**Automated triggers:**
-```python
-def determine_action(quality_score: int) -> str:
-    if quality_score < 30:
-        return "MANUAL_REVIEW"
-    elif quality_score < 50:
-        return "RE_SCRAPE"
-    elif quality_score < 70:
-        return "ENRICH_OPTIONAL"
-    else:
-        return "READY"
-```
+| Band | Score | Constant | League Checker Action |
+|------|-------|----------|-----------------------|
+| THIN | 0–59 | `AUTO_REPLACE_THRESHOLD = 60` | Super scrape auto-archives if contradicted |
+| BORDERLINE | 60–74 | `DEEP_SCRAPE_THRESHOLD = 75` | Super scrape triggered; contradictions queued for review |
+| ACCEPTABLE | 75–89 | — | Standard team count check |
+| SUBSTANTIAL | 90+ | — | Standard team count check |
+
+**League Checker branching:** When `min(quality_score) < 75` for a URL's leagues, League Checker
+triggers `super_scraper.run()` (deep crawl + team count pass) instead of the standard check.
 
 ---
 
@@ -213,6 +204,21 @@ HAVING COUNT(*) > 1;
 - Same league, different URLs → Keep both, mark as `same_league_id` reference
 - Same org, different venues → Separate leagues
 - Same everything, different times → Separate leagues (multiple sessions)
+
+### Merge Tool Split
+
+The old single Merge Tool has been replaced with two scoped tools:
+
+| Tool | Page | Scope | Backend |
+|------|------|-------|---------|
+| **URL Merge** | `url_merge.py` | Finds duplicates within a single `url_scraped` using `find_within_url_duplicates()` | `get_duplicate_groups_for_url()` |
+| **League Merge** | `league_merge.py` | Cross-URL dedup using the 6-field identity model | `get_duplicate_groups()` |
+
+Both tools share the same `_merge()` / `archive_league()` backend.
+
+**Confidence levels (URL Merge only):**
+- `AUTO` — 5–6 identity fields match (safe to auto-archive in super scraper)
+- `REVIEW` — 4 identity fields match (surfaced for manual review in URL Merge)
 
 ---
 

@@ -19,6 +19,7 @@ import anthropic
 from src.database.supabase_client import get_client
 from src.database.snapshot_store import get_snapshots_by_domain
 from src.database.validators import calculate_quality_score
+from src.scraper.firecrawl_client import FirecrawlClient
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +62,113 @@ class FieldEnricher:
     # ── public ────────────────────────────────────────────────────────────────
 
     def enrich_url(self, url: str) -> list[FieldEnrichResult]:
-        """Enrich all leagues at a URL. Returns one result per league."""
-        raise NotImplementedError("implemented in Task 5")
+        """Enrich all leagues at a URL. Returns one result per league.
+
+        Flow:
+          1. Fetch league records for URL
+          2. Build union of null fields across all leagues
+          3. Short-circuit if nothing to fill
+          4. Try extraction from cached snapshot
+          5. Firecrawl fallback if no snapshot or extraction returned nothing
+          6. Write back hits; record skipped fields
+        """
+        # Step 1: fetch leagues
+        response = (
+            self._db.table("leagues_metadata")
+            .select("*")
+            .eq("url_scraped", url)
+            .eq("is_archived", False)
+            .execute()
+        )
+        leagues = response.data or []
+
+        if not leagues:
+            logger.warning("No active leagues found for %s", url)
+            return []
+
+        # Step 2: null fields per league (union across all leagues)
+        all_null_fields: list[str] = []
+        league_null_map: dict[str, list[str]] = {}
+        for lg in leagues:
+            nf = self._get_null_fields(lg)
+            league_null_map[lg["league_id"]] = nf
+            for f in nf:
+                if f not in all_null_fields:
+                    all_null_fields.append(f)
+
+        # Step 3: short-circuit if nothing to fill
+        if not all_null_fields:
+            return [
+                FieldEnrichResult(
+                    league_id=lg["league_id"],
+                    org_name=lg.get("organization_name", ""),
+                    skipped_fields=[],
+                    source="none",
+                )
+                for lg in leagues
+            ]
+
+        # Step 4: try extraction from cached snapshot
+        domain = urlparse(url).netloc
+        snapshots = get_snapshots_by_domain(domain)
+        snapshot_content = snapshots[0]["content"] if snapshots else None
+
+        patches: list[dict] = []
+        source = "none"
+
+        if snapshot_content:
+            patches = self._extract(snapshot_content, all_null_fields, leagues)
+            if patches:
+                source = "cache"
+
+        # Step 5: Firecrawl fallback if no snapshot or empty extraction
+        if not patches:
+            api_key = os.environ.get("FIRECRAWL_API_KEY", "")
+            try:
+                fc = FirecrawlClient(api_key=api_key)
+                fc_content = fc.scrape(url)
+                patches = self._extract(fc_content, all_null_fields, leagues)
+                if patches:
+                    source = "firecrawl"
+            except Exception as exc:
+                logger.warning("Firecrawl fallback failed for %s: %s", url, exc)
+                return [
+                    FieldEnrichResult(
+                        league_id=lg["league_id"],
+                        org_name=lg.get("organization_name", ""),
+                        skipped_fields=league_null_map.get(lg["league_id"], []),
+                        source="none",
+                        error=str(exc),
+                    )
+                    for lg in leagues
+                ]
+
+        # Step 6: write back and build results
+        patch_map: dict[str, dict] = {p.get("league_id", ""): p for p in patches}
+
+        results = []
+        for lg in leagues:
+            lid = lg["league_id"]
+            patch = {k: v for k, v in patch_map.get(lid, {}).items() if k != "league_id"}
+            null_fields_for_league = league_null_map.get(lid, [])
+
+            if patch:
+                self._write_back(lid, patch)
+                filled = [f for f in patch if f in null_fields_for_league]
+                skipped = [f for f in null_fields_for_league if f not in patch]
+            else:
+                filled = []
+                skipped = null_fields_for_league
+
+            results.append(FieldEnrichResult(
+                league_id=lid,
+                org_name=lg.get("organization_name", ""),
+                filled_fields=filled,
+                skipped_fields=skipped,
+                source=source if patch else "none",
+            ))
+
+        return results
 
     # ── helpers ───────────────────────────────────────────────────────────────
 

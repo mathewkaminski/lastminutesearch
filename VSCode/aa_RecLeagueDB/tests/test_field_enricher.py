@@ -158,3 +158,120 @@ def test_write_back_updates_patched_fields(enricher):
     assert updated_data["team_fee"] == 875.0
     assert "quality_score" in updated_data
     assert "updated_at" in updated_data
+
+
+# ── enrich_url ────────────────────────────────────────────────────────────────
+
+def _mock_db_leagues(enricher, leagues: list[dict]) -> None:
+    """Wire enricher._db to return given leagues."""
+    mock_chain = MagicMock()
+    mock_chain.execute.return_value.data = leagues
+    enricher._db.table.return_value.select.return_value.eq.return_value.eq.return_value = mock_chain
+
+
+def test_enrich_url_cache_hit_writes_back(enricher):
+    """Cache hit: snapshot found → extract → write_back called per league."""
+    league = _make_league()
+    url = "https://ottawavolleysixes.com/register"
+
+    _mock_db_leagues(enricher, [league])
+    patches = [{"league_id": "uuid-1", "venue_name": "Nepean Sportsplex", "team_fee": 875.0}]
+    enricher._extract = MagicMock(return_value=patches)
+    enricher._write_back = MagicMock()
+
+    snapshot = {"content": "Nepean Sportsplex content"}
+    with patch("src.enrichers.field_enricher.get_snapshots_by_domain", return_value=[snapshot]):
+        results = enricher.enrich_url(url)
+
+    assert len(results) == 1
+    assert results[0].source == "cache"
+    assert "venue_name" in results[0].filled_fields
+    assert "team_fee" in results[0].filled_fields
+    enricher._write_back.assert_called_once_with(
+        "uuid-1", {"venue_name": "Nepean Sportsplex", "team_fee": 875.0}
+    )
+
+
+def test_enrich_url_firecrawl_fallback_on_no_snapshot(enricher):
+    """No snapshot → Firecrawl called → extract → write_back called."""
+    league = _make_league()
+    url = "https://ottawavolleysixes.com/register"
+
+    _mock_db_leagues(enricher, [league])
+    patches = [{"league_id": "uuid-1", "venue_name": "Nepean Sportsplex"}]
+    enricher._extract = MagicMock(return_value=patches)
+    enricher._write_back = MagicMock()
+
+    mock_fc_instance = MagicMock()
+    mock_fc_instance.scrape.return_value = "Firecrawl page content"
+
+    with patch("src.enrichers.field_enricher.get_snapshots_by_domain", return_value=[]):
+        with patch("src.enrichers.field_enricher.FirecrawlClient", return_value=mock_fc_instance):
+            results = enricher.enrich_url(url)
+
+    assert results[0].source == "firecrawl"
+    assert "venue_name" in results[0].filled_fields
+    mock_fc_instance.scrape.assert_called_once_with(url)
+
+
+def test_enrich_url_firecrawl_fallback_on_empty_extraction(enricher):
+    """Snapshot exists but extraction empty → falls back to Firecrawl."""
+    league = _make_league()
+    url = "https://ottawavolleysixes.com/register"
+
+    _mock_db_leagues(enricher, [league])
+    call_count = {"n": 0}
+
+    def extract_side_effect(content, null_fields, leagues):
+        call_count["n"] += 1
+        return [] if call_count["n"] == 1 else [{"league_id": "uuid-1", "venue_name": "Nepean"}]
+
+    enricher._extract = MagicMock(side_effect=extract_side_effect)
+    enricher._write_back = MagicMock()
+
+    mock_fc_instance = MagicMock()
+    mock_fc_instance.scrape.return_value = "Firecrawl content"
+
+    snapshot = {"content": "standings only"}
+    with patch("src.enrichers.field_enricher.get_snapshots_by_domain", return_value=[snapshot]):
+        with patch("src.enrichers.field_enricher.FirecrawlClient", return_value=mock_fc_instance):
+            results = enricher.enrich_url(url)
+
+    assert results[0].source == "firecrawl"
+
+
+def test_enrich_url_no_null_fields_skips_extraction(enricher):
+    """League with all fields populated → extraction skipped, source=none."""
+    league = _make_league(**{f: "x" for f in ENRICHABLE_FIELDS})
+    url = "https://ottawavolleysixes.com/register"
+
+    _mock_db_leagues(enricher, [league])
+    enricher._extract = MagicMock()
+
+    with patch("src.enrichers.field_enricher.get_snapshots_by_domain", return_value=[]):
+        results = enricher.enrich_url(url)
+
+    enricher._extract.assert_not_called()
+    assert results[0].source == "none"
+    assert results[0].filled_fields == []
+
+
+def test_enrich_url_firecrawl_error_returns_error_result(enricher):
+    """Firecrawl failure → result with error set, no exception raised."""
+    league = _make_league()
+    url = "https://ottawavolleysixes.com/register"
+
+    _mock_db_leagues(enricher, [league])
+    enricher._extract = MagicMock(return_value=[])
+    enricher._write_back = MagicMock()
+
+    mock_fc_instance = MagicMock()
+    mock_fc_instance.scrape.side_effect = RuntimeError("Firecrawl blocked")
+
+    with patch("src.enrichers.field_enricher.get_snapshots_by_domain", return_value=[]):
+        with patch("src.enrichers.field_enricher.FirecrawlClient", return_value=mock_fc_instance):
+            results = enricher.enrich_url(url)
+
+    assert results[0].error is not None
+    assert "blocked" in results[0].error
+    assert results[0].source == "none"

@@ -9,6 +9,7 @@ from src.checkers.team_count_extractor import TeamCountExtractor, TeamExtraction
 from src.checkers.playwright_navigator import PlaywrightNavigator, NavigatedPage
 from src.database.check_store import CheckStore
 from src.database.supabase_client import get_client
+from src.config.quality_thresholds import DEEP_SCRAPE_THRESHOLD
 
 
 def compute_status(old: int | None, new: int) -> str:
@@ -27,7 +28,12 @@ def match_to_db(extraction: TeamExtractionResult, db_leagues: list[dict]) -> dic
     best_score = 0.0
     best_league = None
     for league in db_leagues:
-        candidate = (league.get("division_name") or league.get("league_name") or "").lower()
+        parts = [
+            league.get("day_of_week") or "",
+            league.get("gender_eligibility") or "",
+            league.get("competition_level") or "",
+        ]
+        candidate = " ".join(p for p in parts if p).lower()
         score = SequenceMatcher(None, extraction.division_name.lower(), candidate).ratio()
         if score > best_score:
             best_score = score
@@ -53,21 +59,58 @@ class LeagueChecker:
     def _get_leagues_for_url(self, url: str) -> list[dict]:
         result = (
             self.supabase.table("leagues_metadata")
-            .select("league_id, organization_name, num_teams, division_name, day_of_week, sport_season_code")
+            .select("league_id, organization_name, num_teams, day_of_week, competition_level, gender_eligibility, sport_season_code, quality_score")
             .eq("url_scraped", url)
             .execute()
         )
         return result.data or []
 
     def check_url(self, url: str, progress_callback=None) -> CheckRunResult:
-        """Synchronous entry point — wraps async navigate."""
-        return asyncio.run(self._check_url_async(url, progress_callback))
+        """Synchronous entry point — branches on quality score."""
+        db_leagues = self._get_leagues_for_url(url)
+        min_quality = min((l.get("quality_score") or 0 for l in db_leagues), default=0)
 
-    async def _check_url_async(self, url: str, progress_callback=None) -> CheckRunResult:
+        if min_quality < DEEP_SCRAPE_THRESHOLD and db_leagues:
+            if progress_callback:
+                progress_callback(
+                    f"Quality {min_quality} < {DEEP_SCRAPE_THRESHOLD} — triggering super scrape"
+                )
+            return self._super_check(url, db_leagues, progress_callback)
+        else:
+            return self._standard_check(url, db_leagues, progress_callback)
+
+    def _standard_check(self, url: str, db_leagues: list[dict], progress_callback=None) -> CheckRunResult:
+        """Sync wrapper — runs the standard async check."""
+        return asyncio.run(self._standard_check_async(url, db_leagues, progress_callback))
+
+    def _super_check(self, url: str, db_leagues: list[dict], progress_callback=None) -> CheckRunResult:
+        """Run super scraper (deep crawl + team count pass) for low-quality records."""
+        from scripts.super_scraper import run as super_run
+        check_run_id = uuid4()
+        if progress_callback:
+            progress_callback("Running super scrape (deep crawl + team count pass)...")
+        result = super_run(url, dry_run=False)
+        checks = [{
+            "check_run_id": str(check_run_id),
+            "league_id": None,
+            "status": "SUPER_SCRAPED",
+            "old_num_teams": None,
+            "new_num_teams": result.get("leagues_written"),
+            "division_name": None,
+            "nav_path": [],
+            "screenshot_paths": [],
+            "url_checked": url,
+            "super_scrape_result": result,
+        }]
+        self.check_store.save_checks(checks)
+        return CheckRunResult(check_run_id=check_run_id, checks=checks, url=url)
+
+    async def _standard_check_async(self, url: str, db_leagues: list[dict] | None = None, progress_callback=None) -> CheckRunResult:
         from playwright.async_api import async_playwright
 
         check_run_id = uuid4()
-        db_leagues = self._get_leagues_for_url(url)
+        if db_leagues is None:
+            db_leagues = self._get_leagues_for_url(url)
 
         if progress_callback:
             progress_callback(f"Found {len(db_leagues)} league(s) at URL")

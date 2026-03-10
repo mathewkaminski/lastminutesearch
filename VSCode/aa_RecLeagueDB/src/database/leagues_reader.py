@@ -175,6 +175,35 @@ def get_duplicate_groups() -> list[dict]:
     ]
 
 
+def get_duplicate_groups_for_url(url_scraped: str) -> list[dict]:
+    """Return duplicate groups scoped to a single url_scraped.
+
+    Same logic as get_duplicate_groups() but pre-filtered to one URL.
+    """
+    client = get_client()
+    result = (
+        client.table("leagues_metadata")
+        .select("*")
+        .eq("url_scraped", url_scraped)
+        .eq("is_archived", False)
+        .execute()
+    )
+    rows = result.data or []
+
+    from src.database.consolidator import find_within_url_duplicates
+    dup_groups = find_within_url_duplicates(rows)
+
+    # Convert ConsolidationGroup → same dict format as get_duplicate_groups()
+    groups = []
+    id_to_row = {r["league_id"]: r for r in rows}
+    for g in dup_groups:
+        keep = id_to_row.get(g.keep_id)
+        arch = id_to_row.get(g.archive_id)
+        if keep and arch:
+            groups.append({"records": [keep, arch], "confidence": g.confidence})
+    return groups
+
+
 def archive_league(league_id: str) -> None:
     """Set is_archived=True for a single league record.
 

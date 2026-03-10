@@ -45,7 +45,8 @@ PAGES = {
     # Data Management
     "🗂️ Leagues Viewer":         ("manage",  "leagues_viewer"),
     "📊 Data Quality":           ("manage",  "data_quality"),
-    "🔀 Merge Tool":             ("manage",  "merge_tool"),
+    "🔗 URL Merge":              ("manage",  "url_merge"),
+    "🔀 League Merge":           ("manage",  "league_merge"),
     "📍 Venues Enricher":        ("manage",  "venues_enricher"),
     "🏢 Org View":               ("manage",  "org_view"),
 }
@@ -57,7 +58,7 @@ with st.sidebar:
         if st.button(label, key=f"nav_{label}", use_container_width=True):
             st.session_state.current_page = label
     st.caption("── Data Management ──")
-    for label in ["🗂️ Leagues Viewer", "📊 Data Quality", "🔀 Merge Tool", "📍 Venues Enricher", "🏢 Org View"]:
+    for label in ["🗂️ Leagues Viewer", "📊 Data Quality", "🔗 URL Merge", "🔀 League Merge", "📍 Venues Enricher", "🏢 Org View"]:
         if st.button(label, key=f"nav_{label}", use_container_width=True):
             st.session_state.current_page = label
 
@@ -110,13 +111,13 @@ elif module_name == "data_quality":
         st.info("📊 **Data Quality Dashboard** — coming next. Will show quality score distribution, field coverage, and issue queue.")
         st.markdown("See [CLAUDE_MANAGE.md](../docs/agents/CLAUDE_MANAGE.md) for the full spec.")
 
-elif module_name == "merge_tool":
-    try:
-        from pages import merge_tool
-        merge_tool.render()
-    except ImportError:
-        st.info("🔀 **Merge Tool** — coming next. Will surface duplicate leagues for side-by-side review and merge/delete actions.")
-        st.markdown("See [CLAUDE_MANAGE.md](../docs/agents/CLAUDE_MANAGE.md) for the full spec.")
+elif module_name == "url_merge":
+    from pages import url_merge
+    url_merge.render()
+
+elif module_name == "league_merge":
+    from pages import league_merge
+    league_merge.render()
 
 elif module_name == "venues_enricher":
     from pages import venues_enricher

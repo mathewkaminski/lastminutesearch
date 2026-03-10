@@ -112,7 +112,67 @@ PAGE CONTENT:
 JSON Output:"""
 
     def _extract(self, content: str, null_fields: list[str], leagues: list[dict]) -> list[dict]:
-        raise NotImplementedError("implemented in Task 4")
+        """Call Claude to extract null fields from page content.
+
+        Returns list of patch dicts with only non-null extracted values.
+        Returns [] on any parse error.
+        """
+        prompt = self._build_prompt(content, null_fields, leagues)
+        try:
+            message = self._anthropic.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=2048,
+                temperature=0,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = message.content[0].text.strip()
+
+            # Strip markdown fences if present
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+
+            patches = json.loads(raw)
+            if isinstance(patches, dict):
+                patches = [patches]
+
+            # Strip null values — don't overwrite existing data with null
+            return [
+                {k: v for k, v in patch.items() if v is not None}
+                for patch in patches
+            ]
+        except Exception as exc:
+            logger.warning("Extraction failed: %s", exc)
+            return []
 
     def _write_back(self, league_id: str, patch: dict) -> None:
-        raise NotImplementedError("implemented in Task 4")
+        """Write extracted fields back to leagues_metadata.
+
+        Fetches current record, merges patch, recalculates quality_score,
+        updates patched fields + quality_score + updated_at.
+        """
+        from datetime import datetime, timezone
+
+        result = (
+            self._db.table("leagues_metadata")
+            .select("*")
+            .eq("league_id", league_id)
+            .execute()
+        )
+        if not result.data:
+            logger.warning("_write_back: league %s not found", league_id)
+            return
+
+        current = result.data[0]
+        merged = {**current, **patch}
+        new_quality = calculate_quality_score(merged)
+
+        update_payload = {
+            **patch,
+            "quality_score": new_quality,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        self._db.table("leagues_metadata").update(update_payload).eq("league_id", league_id).execute()
+        logger.info("Updated league %s: fields=%s quality=%d", league_id, list(patch.keys()), new_quality)

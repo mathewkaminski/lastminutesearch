@@ -1,6 +1,6 @@
 # RecSportsDB — CLAUDE.md
 
-**Last Updated:** 2026-03-01
+**Last Updated:** 2026-03-10
 **Project Status:** Active Development
 
 ---
@@ -10,8 +10,9 @@
 | Task | Context File | Streamlit Pages |
 |------|-------------|-----------------|
 | **URL Discovery** | [CLAUDE_SEARCH.md](docs/agents/CLAUDE_SEARCH.md) | Campaign Manager, Queue Monitor |
-| **Scraping & Extraction** | [CLAUDE_EXTRACT.md](docs/agents/CLAUDE_EXTRACT.md) | Scraper UI (in progress — separate session) |
-| **Data Cleaning & Validation** | [CLAUDE_MANAGE.md](docs/agents/CLAUDE_MANAGE.md) | Leagues Viewer, Data Quality, Merge Tool |
+| **Scraping & Extraction** | [CLAUDE_EXTRACT.md](docs/agents/CLAUDE_EXTRACT.md) | Queue Monitor (run scraper), Scraper UI (in progress) |
+| **Data Cleaning & Validation** | [CLAUDE_MANAGE.md](docs/agents/CLAUDE_MANAGE.md) | Leagues Viewer, Data Quality, URL Merge, League Merge, Org View |
+| **Enrichment** | [CLAUDE_MANAGE.md](docs/agents/CLAUDE_MANAGE.md) | Venues Enricher, League Checker |
 | **Analytics & Queries** | [CLAUDE_QUERY.md](docs/agents/CLAUDE_QUERY.md) | (future) |
 
 **Current Focus:** `CLAUDE_EXTRACT.md` (scraper UI) + `CLAUDE_MANAGE.md` (data management tools)
@@ -77,12 +78,16 @@ aa_RecLeagueDB/
 ├── streamlit_app/
 │   ├── app.py                   # Entry point + navigation
 │   └── pages/
-│       ├── campaign_manager.py      # Search: city + sport input
-│       ├── queue_monitor.py         # Scrape queue status + screening
-│       ├── scraper_ui.py            # Scrape: select URLs to scrape (in progress)
-│       ├── leagues_viewer.py        # Manage: browse leagues_metadata
-│       ├── data_quality.py          # Manage: quality scores & issues
-│       └── merge_tool.py            # Manage: dedup & merge leagues
+│       ├── campaign_manager.py      # Search: city + sport → run Serper, queue URLs
+│       ├── queue_monitor.py         # Search/Scrape: browse queue, bulk-update, run scraper, screen URLs
+│       ├── scraper_ui.py            # Scrape: select URLs to scrape (not yet built)
+│       ├── league_checker.py        # Enrich: re-scrape URLs to verify team counts
+│       ├── leagues_viewer.py        # Manage: browse/filter leagues_metadata, export CSV
+│       ├── data_quality.py          # Manage: quality score distribution, field coverage
+│       ├── url_merge.py             # Manage: dedup within a single url_scraped
+│       ├── league_merge.py          # Manage: cross-URL dedup using 6-field identity model
+│       ├── venues_enricher.py       # Enrich: resolve venue names via Google Places API
+│       └── org_view.py              # Manage: browse leagues grouped by base_domain, set listing_type
 │
 ├── scripts/
 │   ├── mcp_agent_scraper.py     # L0: MCP agent (manual)

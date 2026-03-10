@@ -55,6 +55,21 @@
 
 ---
 
+## Quality Score Bands
+
+`quality_score` (0–100) is calculated by `src/database/validators.calculate_quality_score()`.
+
+| Band | Range | Constant | Scraper Behavior |
+|------|-------|----------|-----------------|
+| Thin | 0–59 | `AUTO_REPLACE_THRESHOLD = 60` | Super scrape auto-archives old + writes new if contradicted |
+| Borderline | 60–74 | `DEEP_SCRAPE_THRESHOLD = 75` | Super scrape triggered; contradictions flagged for manual review |
+| Acceptable | 75–89 | — | Standard League Checker: team count verify only |
+| Substantial | 90+ | — | Standard League Checker: team count verify only |
+
+Constants: `src/config/quality_thresholds.py`
+
+---
+
 ## organizations (Structured Data — SQL)
 
 * `organization_id` (UUID, PK)

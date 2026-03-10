@@ -1,7 +1,10 @@
 """Deterministic crawler: Playwright YAML + 4-way Haiku classifier.
 
 Navigation algorithm:
-  Layer 0 — Fetch home. Classify. If not OTHER, collect.
+  Layer 0 — Fetch start URL. Always collect (home pages carry fee/schedule data
+             even when classified OTHER). If start URL is a sub-page, also fetch
+             the root URL and collect it.
+             If classified LEAGUE_INDEX, follow internal links.
   Step A  — Visit ALL primary links (score >= 100). For each:
               LEAGUE_DETAIL / SCHEDULE → collect
               LEAGUE_INDEX             → follow internal links (_follow_index_links)
@@ -45,6 +48,7 @@ def _follow_index_links(
     league_pages: list,
     max_index_depth: int,
     current_depth: int,
+    force_refresh: bool = False,
 ) -> None:
     """Fetch and classify internal links found on a LEAGUE_INDEX page.
 
@@ -87,7 +91,7 @@ def _follow_index_links(
     for link in candidates:
         visited.add(link.url)  # already normalized above
         try:
-            page_yaml, _ = fetch_page_as_yaml(link.url)
+            page_yaml, _ = fetch_page_as_yaml(link.url, force_refresh=force_refresh)
             page_type = classify_page(page_yaml)
 
             if page_type in ("LEAGUE_DETAIL", "SCHEDULE"):
@@ -107,6 +111,7 @@ def _follow_index_links(
                         league_pages=league_pages,
                         max_index_depth=max_index_depth,
                         current_depth=current_depth + 1,
+                        force_refresh=force_refresh,
                     )
             # OTHER: skip
 
@@ -117,12 +122,16 @@ def _follow_index_links(
 def crawl(
     start_url: str,
     max_index_depth: int = 2,
+    primary_link_min_score: int = 100,
+    force_refresh: bool = False,
 ) -> list:
     """Crawl a sports league website, return pages confirmed to have league data.
 
     Args:
         start_url: Home page URL
         max_index_depth: Maximum recursion depth when following LEAGUE_INDEX pages
+        primary_link_min_score: Minimum score for a link to be followed in Step A
+        force_refresh: If True, bypass cache and re-fetch all pages
 
     Returns:
         List of (url, yaml_content) for pages classified as
@@ -131,15 +140,20 @@ def crawl(
     visited: set = set()
     league_pages: list = []
 
-    # --- Layer 0: Home page ---
-    logger.info(f"Fetching home: {start_url}")
-    home_yaml, _ = fetch_page_as_yaml(start_url)
+    parsed_start = urlparse(start_url)
+    root_url = f"{parsed_start.scheme}://{parsed_start.netloc}/"
+
+    # --- Layer 0: Start URL ---
+    logger.info(f"Fetching start URL: {start_url}")
+    home_yaml, _ = fetch_page_as_yaml(start_url, force_refresh=force_refresh)
     visited.add(_strip_fragment(start_url))
 
+    # Always collect start page — home pages carry fee/schedule data even when
+    # classified OTHER (e.g. a login modal makes Haiku say OTHER but fee text is present).
     home_type = classify_page(home_yaml)
+    logger.info(f"Start URL classified as: {home_type}")
+    league_pages.append((start_url, home_yaml))
     if home_type == "LEAGUE_INDEX":
-        logger.info(f"Home is LEAGUE_INDEX: {start_url}")
-        league_pages.append((start_url, home_yaml))
         _follow_index_links(
             index_url=start_url,
             index_yaml=home_yaml,
@@ -148,11 +162,29 @@ def crawl(
             league_pages=league_pages,
             max_index_depth=max_index_depth,
             current_depth=1,
+            force_refresh=force_refresh,
         )
-    elif home_type in ("LEAGUE_DETAIL", "SCHEDULE"):
-        logger.info(f"Home is {home_type}: {start_url}")
-        league_pages.append((start_url, home_yaml))
-    # OTHER: don't add home, still parse its links for primary navigation
+
+    # --- If start URL is a sub-page, also fetch the root ---
+    root_stripped = _strip_fragment(root_url)
+    if root_stripped not in visited:
+        visited.add(root_stripped)
+        logger.info(f"Start URL is a sub-page — also fetching root: {root_url}")
+        root_yaml, _ = fetch_page_as_yaml(root_url, force_refresh=force_refresh)
+        root_type = classify_page(root_yaml)
+        logger.info(f"Root classified as: {root_type}")
+        league_pages.append((root_url, root_yaml))
+        if root_type == "LEAGUE_INDEX":
+            _follow_index_links(
+                index_url=root_url,
+                index_yaml=root_yaml,
+                base_url=root_url,
+                visited=visited,
+                league_pages=league_pages,
+                max_index_depth=max_index_depth,
+                current_depth=1,
+                force_refresh=force_refresh,
+            )
 
     # --- Parse home navigation links ---
     try:
@@ -173,7 +205,7 @@ def crawl(
         if normalized in seen:
             continue
         seen.add(normalized)
-        if link.score >= 100:
+        if link.score >= primary_link_min_score:
             link.url = normalized  # fetch the clean URL
             primary_links.append(link)
 
@@ -185,7 +217,7 @@ def crawl(
             continue
         visited.add(link.url)  # link.url is already normalized from above
         try:
-            page_yaml, _ = fetch_page_as_yaml(link.url)
+            page_yaml, _ = fetch_page_as_yaml(link.url, force_refresh=force_refresh)
             page_type = classify_page(page_yaml)
 
             if page_type in ("LEAGUE_DETAIL", "SCHEDULE"):
@@ -203,6 +235,7 @@ def crawl(
                     league_pages=league_pages,
                     max_index_depth=max_index_depth,
                     current_depth=1,
+                    force_refresh=force_refresh,
                 )
             # OTHER: skip
 

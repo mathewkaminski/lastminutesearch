@@ -180,5 +180,5 @@ def render():
                         else:
                             st.info(f"{res.org_name} — no new data found ({source_badge})")
 
-                        if skipped:
+                        if skipped and (filled or res.error):
                             st.caption(f"Still missing: {', '.join(skipped)}")

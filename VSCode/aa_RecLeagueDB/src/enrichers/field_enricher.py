@@ -14,6 +14,8 @@ import os
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+import yaml as _yaml
+
 import anthropic
 
 from src.database.supabase_client import get_client
@@ -134,8 +136,10 @@ class FieldEnricher:
         if still_missing:
             mini_patches = self._mini_crawl_for_fields(url, still_missing)
 
-        # Step 5: Firecrawl fallback if no snapshot or empty extraction
-        if not patches:
+        still_missing_after_mini = [f for f in still_missing if f not in mini_patches]
+
+        # Step 5: Firecrawl fallback if no snapshot or empty extraction and fields still missing
+        if not patches and still_missing_after_mini:
             api_key = os.environ.get("FIRECRAWL_API_KEY", "")
             try:
                 fc = FirecrawlClient(api_key=api_key)
@@ -293,8 +297,6 @@ JSON Output:"""
         Returns:
             Dict of {field_name: value} for any fields found
         """
-        import yaml as _yaml
-
         missing_categories = set(map_fields_to_categories(missing_fields).keys())
         if not missing_categories:
             return {}

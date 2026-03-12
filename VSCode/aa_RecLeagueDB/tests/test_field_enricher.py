@@ -275,3 +275,61 @@ def test_enrich_url_firecrawl_error_returns_error_result(enricher):
     assert results[0].error is not None
     assert "blocked" in results[0].error
     assert results[0].source == "none"
+
+
+# ── TestMiniCrawlTier ─────────────────────────────────────────────────────────
+
+class TestMiniCrawlTier:
+    def test_enrich_url_calls_mini_crawl_when_snapshot_yields_nothing(self):
+        """When snapshot extraction returns empty patches, mini-crawl is attempted before Firecrawl."""
+        fake_leagues = [{"league_id": "abc", "organization_name": "Test", "url_scraped": "https://example.com", "is_archived": False, "team_fee": None, "venue_name": None}]
+
+        with (
+            patch("src.enrichers.field_enricher.get_snapshots_by_domain") as mock_snaps,
+            patch("src.enrichers.field_enricher.FieldEnricher._extract") as mock_extract,
+            patch("src.enrichers.field_enricher.FieldEnricher._mini_crawl_for_fields") as mock_mini,
+            patch("src.enrichers.field_enricher.FirecrawlClient") as mock_fc_cls,
+            patch("src.enrichers.field_enricher.FieldEnricher._write_back"),
+        ):
+            # DB returns fake league
+            mock_db = MagicMock()
+            mock_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = fake_leagues
+
+            mock_snaps.return_value = [{"content": "snapshot content"}]
+            mock_extract.return_value = []  # snapshot extraction finds nothing
+            mock_mini.return_value = {"team_fee": 150.0}  # mini-crawl finds team_fee
+            mock_fc_cls.return_value.scrape.return_value = ""
+
+            from src.enrichers.field_enricher import FieldEnricher
+            enricher = FieldEnricher(supabase_client=mock_db)
+            enricher.enrich_url("https://example.com")
+
+        mock_mini.assert_called_once()
+
+    def test_mini_crawl_skipped_when_snapshot_fills_all_fields(self):
+        """Mini-crawl not attempted if snapshot extraction fills all null fields."""
+        # All ENRICHABLE_FIELDS populated except team_fee; snapshot patch fills team_fee
+        base_league = {"league_id": "abc", "organization_name": "Test", "url_scraped": "https://example.com", "is_archived": False}
+        for f in ENRICHABLE_FIELDS:
+            base_league[f] = "x"
+        base_league["team_fee"] = None
+        fake_leagues = [base_league]
+        fake_patch = [{"league_id": "abc", "team_fee": 150.0}]
+
+        with (
+            patch("src.enrichers.field_enricher.get_snapshots_by_domain") as mock_snaps,
+            patch("src.enrichers.field_enricher.FieldEnricher._extract") as mock_extract,
+            patch("src.enrichers.field_enricher.FieldEnricher._mini_crawl_for_fields") as mock_mini,
+            patch("src.enrichers.field_enricher.FieldEnricher._write_back"),
+        ):
+            mock_db = MagicMock()
+            mock_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = fake_leagues
+
+            mock_snaps.return_value = [{"content": "snapshot content"}]
+            mock_extract.return_value = fake_patch  # snapshot filled everything
+
+            from src.enrichers.field_enricher import FieldEnricher
+            enricher = FieldEnricher(supabase_client=mock_db)
+            enricher.enrich_url("https://example.com")
+
+        mock_mini.assert_not_called()

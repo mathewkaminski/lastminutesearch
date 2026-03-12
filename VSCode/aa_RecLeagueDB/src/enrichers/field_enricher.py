@@ -20,6 +20,10 @@ from src.database.supabase_client import get_client
 from src.database.snapshot_store import get_snapshots_by_domain
 from src.database.validators import calculate_quality_score
 from src.scraper.firecrawl_client import FirecrawlClient
+from src.extractors.gap_reporter import map_fields_to_categories
+from src.scraper.yaml_link_parser import extract_navigation_links, infer_link_category
+from src.scraper.playwright_yaml_fetcher import fetch_page_as_yaml
+from src.extractors.yaml_extractor import extract_league_data_from_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +125,15 @@ class FieldEnricher:
             if patches:
                 source = "cache"
 
+        # Stage 2: mini-crawl for fields still missing after snapshot
+        snapshot_field_names = {
+            k for p in patches for k in p.keys() if k != "league_id"
+        }
+        still_missing = [f for f in all_null_fields if f not in snapshot_field_names]
+        mini_patches: dict = {}
+        if still_missing:
+            mini_patches = self._mini_crawl_for_fields(url, still_missing)
+
         # Step 5: Firecrawl fallback if no snapshot or empty extraction
         if not patches:
             api_key = os.environ.get("FIRECRAWL_API_KEY", "")
@@ -145,6 +158,17 @@ class FieldEnricher:
 
         # Step 6: write back and build results
         patch_map: dict[str, dict] = {p.get("league_id", ""): p for p in patches}
+
+        # Merge mini-crawl patches into patch_map
+        for lg in leagues:
+            lid = lg["league_id"]
+            lg_null = [f for f in still_missing if lg.get(f) is None]
+            mini_for_league = {f: v for f, v in mini_patches.items() if f in lg_null}
+            if mini_for_league:
+                if lid in patch_map:
+                    patch_map[lid].update(mini_for_league)
+                else:
+                    patch_map[lid] = mini_for_league
 
         results = []
         for lg in leagues:
@@ -251,6 +275,78 @@ JSON Output:"""
         except Exception as exc:
             logger.warning("Extraction failed: %s", exc)
             return []
+
+    def _mini_crawl_for_fields(
+        self, url: str, missing_fields: list[str], max_pages_per_category: int = 2
+    ) -> dict:
+        """Targeted mini-crawl for specific missing fields.
+
+        Fetches home page, scores links with lowered threshold (60), follows links
+        tagged to categories matching missing fields. Uses Tier-2 extraction
+        (YAML + full_text) on discovered pages.
+
+        Args:
+            url: Base URL to crawl from
+            missing_fields: Fields still null after snapshot extraction
+            max_pages_per_category: Max pages to fetch per missing category (default 2)
+
+        Returns:
+            Dict of {field_name: value} for any fields found
+        """
+        import yaml as _yaml
+
+        missing_categories = set(map_fields_to_categories(missing_fields).keys())
+        if not missing_categories:
+            return {}
+
+        try:
+            home_yaml, home_meta = fetch_page_as_yaml(url, use_cache=True)
+        except Exception:
+            return {}
+
+        if not home_yaml:
+            return {}
+
+        try:
+            home_tree = _yaml.safe_load(home_yaml)
+            links = extract_navigation_links(home_tree, url, min_score=60)
+        except Exception:
+            return {}
+
+        # Set field_category on links that lack it
+        for link in links:
+            if link.field_category is None:
+                link.field_category = infer_link_category(link.anchor_text, link.page_type)
+
+        category_links: dict[str, list] = {}
+        for link in links:
+            cat = link.field_category
+            if cat and cat in missing_categories:
+                category_links.setdefault(cat, []).append(link)
+
+        found: dict = {}
+        visited: set = {url}
+        for cat, cat_links in category_links.items():
+            for link in cat_links[:max_pages_per_category]:
+                if link.url in visited:
+                    continue
+                visited.add(link.url)
+                try:
+                    page_yaml, page_meta = fetch_page_as_yaml(link.url, use_cache=True)
+                    if not page_yaml:
+                        continue
+                    full_text = (page_meta or {}).get("full_text", "")
+                    leagues = extract_league_data_from_yaml(
+                        page_yaml, url=link.url, full_text=full_text
+                    )
+                    for league in leagues:
+                        for f in missing_fields:
+                            if f not in found and league.get(f) is not None:
+                                found[f] = league[f]
+                except Exception:
+                    continue
+
+        return found
 
     def _write_back(self, league_id: str, patch: dict) -> None:
         """Write extracted fields back to leagues_metadata.

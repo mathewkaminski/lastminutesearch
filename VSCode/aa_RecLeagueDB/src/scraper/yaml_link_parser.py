@@ -18,6 +18,7 @@ class DiscoveredLink:
         score: int = 0,
         page_type: Optional[str] = None,
         clickable: bool = False,
+        field_category: Optional[str] = None,
     ):
         """Initialize discovered link.
 
@@ -27,12 +28,14 @@ class DiscoveredLink:
             score: Link relevance score (0-100+)
             page_type: Inferred page type (registration, schedule, etc.)
             clickable: Whether link is high-priority enough to follow
+            field_category: DB field category this link likely leads to
         """
         self.url = url
         self.anchor_text = anchor_text
         self.score = score
         self.page_type = page_type
         self.clickable = clickable
+        self.field_category = field_category
 
     def __repr__(self) -> str:
         return (
@@ -269,6 +272,50 @@ def infer_page_type(url: str, anchor_text: str = "") -> Optional[str]:
     return None
 
 
+# Field categories → which DB fields they typically contain
+_CATEGORY_MAP: dict[str, list[str]] = {
+    "SCHEDULE": ["schedule", "standings", "teams", "results", "scores", "matchups"],
+    "REGISTRATION": ["registration"],
+    "POLICY": ["rules", "policies", "waiver", "insurance", "referee"],
+    "VENUE": ["venue", "location", "facility"],
+    "DETAIL": ["league_list", "league", "program", "division", "about", "season"],
+}
+
+_CATEGORY_KEYWORDS: dict[str, list[str]] = {
+    "SCHEDULE": ["schedule", "standings", "teams", "results", "scores", "matchups", "upcoming"],
+    "REGISTRATION": ["register", "signup", "sign up", "enroll", "payment", "fees", "pricing", "cost"],
+    "POLICY": ["rules", "policies", "insurance", "waiver", "referee", "format"],
+    "VENUE": ["venue", "location", "facility", "field", "gym", "arena", "court"],
+    "DETAIL": ["league", "division", "program", "season", "current", "calendar", "about", "sport", "join", "enroll", "upcoming"],
+}
+
+
+def infer_link_category(anchor_text: str, page_type: Optional[str]) -> Optional[str]:
+    """Return the field category a link likely leads to.
+
+    Args:
+        anchor_text: Visible link text (lowercased internally)
+        page_type: Page type from infer_page_type(), or None
+
+    Returns:
+        One of "SCHEDULE", "REGISTRATION", "POLICY", "VENUE", "DETAIL", or None
+    """
+    text = anchor_text.lower()
+
+    # Check page_type first (more reliable signal)
+    if page_type:
+        for category, types in _CATEGORY_MAP.items():
+            if page_type in types:
+                return category
+
+    # Fall back to keyword matching on anchor text
+    for category, keywords in _CATEGORY_KEYWORDS.items():
+        if any(kw in text for kw in keywords):
+            return category
+
+    return None
+
+
 def extract_navigation_links(
     yaml_tree: List, base_url: str = "", min_score: int = 100
 ) -> List[DiscoveredLink]:
@@ -290,9 +337,10 @@ def extract_navigation_links(
     # Score links
     scored_links = score_links(links)
 
-    # Infer page types
+    # Infer page types and field categories
     for link in scored_links:
         link.page_type = infer_page_type(link.url, link.anchor_text)
+        link.field_category = infer_link_category(link.anchor_text, link.page_type)
 
     # Filter by score
     high_priority = [link for link in scored_links if link.score >= min_score]

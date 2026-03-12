@@ -106,6 +106,7 @@ def fetch_page_as_yaml(
     }
 
     try:
+        full_text = ""
         with sync_playwright() as p:
             # Launch browser
             logger.info("Launching browser...")

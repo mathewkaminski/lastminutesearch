@@ -268,7 +268,13 @@ def crawl(
                     use_cache=use_cache,
                     force_refresh=force_refresh,
                 )
-            # OTHER: skip
+
+            else:
+                # OTHER — but scored 100+ so still worth extracting from.
+                # e.g. GameSheet schedule pages that show "no matching games"
+                # due to a date filter but still carry division structure in the YAML.
+                logger.info(f"[Step A OTHER-scored] {link.url}")
+                league_pages.append((link.url, page_yaml))
 
         except Exception as e:
             logger.warning(f"[Step A] Fetch failed {link.url}: {e}")

@@ -4,26 +4,11 @@ import json
 import logging
 from typing import Optional, Dict, Any, List
 
-import tiktoken
-from openai import OpenAI
+import anthropic
 
 from src.config.sss_codes import validate_sss_code
 
 logger = logging.getLogger(__name__)
-
-# Lazy-initialized OpenAI client (avoids failing at import when key is missing)
-_client: Optional["OpenAI"] = None
-
-
-def _get_client() -> "OpenAI":
-    global _client
-    if _client is None:
-        _client = OpenAI()
-    return _client
-
-
-# Token encoding
-encoding = tiktoken.get_encoding("cl100k_base")
 
 
 def extract_league_data_from_yaml(
@@ -32,7 +17,7 @@ def extract_league_data_from_yaml(
     metadata: Optional[Dict[str, Any]] = None,
     full_text: str = "",
 ) -> List[Dict[str, Any]]:
-    """Extract ALL structured league metadata from YAML using GPT-4o.
+    """Extract ALL structured league metadata from YAML using Claude.
 
     YAML accessibility trees are:
     - Already semantic (no cleaning needed)
@@ -44,7 +29,7 @@ def extract_league_data_from_yaml(
     1. No cleaning needed (YAML is clean)
     2. No truncation needed (fits in context)
     3. Build extraction prompt with YAML structure guide
-    4. Call GPT-4o with JSON mode
+    4. Call Claude with JSON output instruction
     5. Parse and validate response
     6. Validate SSS code for each league
     7. Calculate completeness for each league
@@ -83,8 +68,8 @@ def extract_league_data_from_yaml(
     prompt = _build_yaml_extraction_prompt(yaml_content, url, full_text=full_text)
     logger.debug(f"Prompt length: {len(prompt)} chars")
 
-    # Step 2: Call GPT-4o
-    response = _call_gpt4(prompt)
+    # Step 2: Call Claude
+    response = _call_claude(prompt)
 
     # Extract leagues from response (array or single object)
     leagues = response.get("leagues", [])
@@ -332,12 +317,12 @@ def _build_sss_reference() -> str:
     return "\n".join(ref_lines)
 
 
-def _call_gpt4(prompt: str, model: str = "gpt-4o", max_retries: int = 2) -> Dict[str, Any]:
-    """Call OpenAI GPT-4o API with structured output.
+def _call_claude(prompt: str, model: str = "claude-sonnet-4-6", max_retries: int = 2) -> Dict[str, Any]:
+    """Call Claude API for structured league extraction.
 
     Args:
         prompt: Extraction prompt
-        model: GPT model to use (default gpt-4o)
+        model: Claude model to use (default claude-sonnet-4-6)
         max_retries: Number of retry attempts (default 2)
 
     Returns:
@@ -347,44 +332,38 @@ def _call_gpt4(prompt: str, model: str = "gpt-4o", max_retries: int = 2) -> Dict
         Exception: If API call fails after retries
     """
     import time
-    from openai import RateLimitError
+    from anthropic import RateLimitError
+
+    client = anthropic.Anthropic()
 
     for attempt in range(1, max_retries + 1):
         try:
             logger.debug(f"Calling {model} (attempt {attempt}/{max_retries})")
 
-            response = _get_client().chat.completions.create(
+            response = client.messages.create(
                 model=model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=0,  # Deterministic for extraction
+                max_tokens=4096,
+                temperature=0,
+                messages=[{"role": "user", "content": prompt}],
             )
 
-            # Parse response
-            response_text = response.choices[0].message.content.strip()
-            logger.debug(f"GPT-4 response: {response_text[:200]}...")
+            response_text = response.content[0].text.strip()
+            logger.debug(f"Claude response: {response_text[:200]}...")
 
-            # Try to parse JSON
+            # Try to parse JSON directly
             try:
-                parsed = json.loads(response_text)
-                return parsed
+                return json.loads(response_text)
             except json.JSONDecodeError:
-                # Try to extract JSON from response
+                # Strip markdown code fences if present
                 start = response_text.find("{")
                 end = response_text.rfind("}") + 1
                 if start >= 0 and end > start:
-                    json_str = response_text[start:end]
-                    parsed = json.loads(json_str)
-                    return parsed
+                    return json.loads(response_text[start:end])
                 raise ValueError(f"Could not parse JSON from response: {response_text[:200]}")
 
         except RateLimitError:
             if attempt < max_retries:
-                wait_time = 2 ** attempt  # Exponential backoff
+                wait_time = 2 ** attempt
                 logger.warning(f"Rate limited, waiting {wait_time}s before retry")
                 time.sleep(wait_time)
             else:

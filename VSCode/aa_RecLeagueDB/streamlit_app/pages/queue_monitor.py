@@ -160,12 +160,28 @@ def render():
         )
         if st.button(
             f"Apply to all {total} filtered rows",
-            type="primary",
             disabled=total == 0,
         ):
-            n = bulk_update_by_filter(sf, pf, st_val, bulk_new_status)
-            st.success(f"Updated {n} rows")
-            st.rerun()
+            st.session_state['pending_bulk'] = (sf, pf, st_val, bulk_new_status, total)
+
+    # Confirmation banner — rendered outside columns so it spans full width
+    if 'pending_bulk' in st.session_state:
+        _sf, _pf, _sv, _status, _count = st.session_state['pending_bulk']
+        st.warning(
+            f"⚠️ This will set **{_count}** rows to **{_status}**. "
+            "This cannot be undone."
+        )
+        _ok, _cancel = st.columns(2)
+        with _ok:
+            if st.button("Yes, update all", type="primary", key="confirm_bulk_yes"):
+                n = bulk_update_by_filter(_sf, _pf, _sv, _status)
+                del st.session_state['pending_bulk']
+                st.success(f"Updated {n} rows")
+                st.rerun()
+        with _cancel:
+            if st.button("Cancel", key="confirm_bulk_cancel"):
+                del st.session_state['pending_bulk']
+                st.rerun()
 
     # ── Run scraper ───────────────────────────────────────────────────────────
     if rows and 'scrape_id' in df.columns:

@@ -6,6 +6,7 @@ Much smaller than raw HTML (~95% reduction).
 
 import json
 import logging
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -59,6 +60,108 @@ EXTRACT_ACCESSIBILITY_TREE_JS = """
     return result;
 })(document.documentElement)
 """
+
+
+# Tab labels to try, in priority order.
+# "Standings" is preferred because it shows teams regardless of date filters.
+_TAB_PRIORITY = ["standings", "teams", "schedule", "results", "divisions", "season"]
+
+
+def _click_best_sports_tab(page) -> None:
+    """Click the highest-priority sports tab/button found on the page.
+
+    Looks for [role="tab"] and <button> elements whose text matches sports
+    keywords. Clicks the best match and waits 1500 ms for content to update.
+    Silently ignores all failures — this is a best-effort enhancement.
+    """
+    try:
+        tabs = page.evaluate("""() => {
+            const els = Array.from(document.querySelectorAll('[role="tab"], button, [role="button"]'));
+            return els.map(el => ({
+                text: (el.innerText || el.textContent || '').trim(),
+            })).filter(e => e.text.length > 0 && e.text.length < 60);
+        }""")
+    except Exception:
+        return
+
+    best_label: str | None = None
+    best_priority = len(_TAB_PRIORITY)  # lower index = higher priority
+
+    for tab in tabs:
+        text_lower = tab.get("text", "").lower()
+        for idx, keyword in enumerate(_TAB_PRIORITY):
+            if keyword in text_lower and idx < best_priority:
+                best_priority = idx
+                best_label = tab["text"]  # keep original case for locator
+                break
+
+    if best_label is None:
+        return
+
+    try:
+        locator = page.locator(
+            f'[role="tab"]:has-text("{best_label}"), button:has-text("{best_label}")'
+        ).first
+        locator.click(timeout=3000)
+        time.sleep(1.5)  # Frame objects don't have wait_for_timeout; use time.sleep
+        logger.info(f"Clicked sports tab: '{best_label}'")
+    except Exception:
+        pass
+
+
+def _extract_iframe_yamls(page) -> list[str]:
+    """Extract accessibility tree YAML from child iframes.
+
+    Widgets like GameSheet are embedded via iframe. The outer page's
+    document.documentElement does NOT include iframe content.
+    This function iterates page.frames (skipping the main frame), clicks
+    the best sports tab inside each frame, and returns YAML for frames
+    that contain meaningful content.
+
+    Args:
+        page: Playwright sync Page object (browser must still be open)
+
+    Returns:
+        List of YAML strings, one per non-empty child frame.
+    """
+    results = []
+    try:
+        frames = page.frames[1:]  # index 0 is always the main frame
+    except Exception:
+        return results
+
+    for frame in frames:
+        try:
+            # Skip about:blank, data: URIs, etc.
+            frame_url = frame.url
+            if not frame_url or frame_url in ("about:blank", "") or frame_url.startswith("data:"):
+                continue
+
+            logger.info(f"Inspecting iframe: {frame_url}")
+
+            # Click the best sports tab inside this frame
+            _click_best_sports_tab(frame)
+
+            # Extract accessibility tree from this frame's document
+            tree = frame.evaluate(EXTRACT_ACCESSIBILITY_TREE_JS)
+            frame_yaml = yaml.dump(
+                tree,
+                default_flow_style=False,
+                sort_keys=False,
+                allow_unicode=True,
+                width=120,
+            )
+
+            # Only include frames that have non-trivial content
+            if len(frame_yaml.strip()) > 100:
+                logger.info(f"  iframe YAML: {len(frame_yaml):,} bytes")
+                results.append(frame_yaml)
+
+        except Exception as e:
+            logger.debug(f"  iframe skipped ({frame_url}): {e}")
+            continue
+
+    return results
 
 
 def fetch_page_as_yaml(
@@ -123,6 +226,14 @@ def fetch_page_as_yaml(
                 logger.info("networkidle timed out, retrying with wait_until='load'")
                 page.goto(url, wait_until="load", timeout=wait_time * 1000)
 
+            # Extra wait for SPAs that render data after initial load
+            page.wait_for_timeout(3000)
+
+            # Try to click sports-relevant tabs before capturing —
+            # e.g. GameSheet defaults to Schedule (shows "no matching games" for
+            # today's date), but Standings always shows teams regardless of date.
+            _click_best_sports_tab(page)
+
             # Extract accessibility tree using JavaScript
             logger.info("Extracting accessibility tree...")
             accessibility_tree = page.evaluate(EXTRACT_ACCESSIBILITY_TREE_JS)
@@ -136,12 +247,17 @@ def fetch_page_as_yaml(
             except Exception:
                 full_text = ""
 
+            # Also extract content from child iframes (e.g. GameSheet embeds).
+            # page.evaluate() only sees the outer document; iframe documents are
+            # separate browsing contexts that must be accessed via page.frames.
+            iframe_yamls = _extract_iframe_yamls(page)
+
             # Close browser
             page.close()
             context.close()
             browser.close()
 
-            # Convert to YAML
+            # Convert main page to YAML
             yaml_content = yaml.dump(
                 accessibility_tree,
                 default_flow_style=False,
@@ -149,6 +265,10 @@ def fetch_page_as_yaml(
                 allow_unicode=True,
                 width=120,
             )
+
+            # Append iframe sections (each labelled so the LLM can see them)
+            for i, iframe_yaml in enumerate(iframe_yamls):
+                yaml_content += f"\n# --- IFRAME {i} ---\n{iframe_yaml}"
 
             # Calculate metrics
             yaml_bytes = len(yaml_content.encode("utf-8"))

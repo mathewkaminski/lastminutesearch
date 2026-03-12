@@ -1,14 +1,26 @@
 from uuid import UUID
 from src.database.supabase_client import get_client
 
+# Only columns that exist in the league_checks table.
+# display-only fields (division_name, raw_teams, super_scrape_result) are excluded.
+_SAVE_COLS = {
+    "check_run_id", "league_id", "status",
+    "old_num_teams", "new_num_teams",
+    "nav_path", "screenshot_paths",
+    "url_checked",
+}
+
 
 class CheckStore:
     def __init__(self):
         self.client = get_client()
 
     def save_checks(self, checks: list[dict]) -> None:
-        """Insert one or more league_check rows."""
-        self.client.table("league_checks").insert(checks).execute()
+        """Insert one or more league_check rows (display-only fields stripped)."""
+        rows = [{k: v for k, v in c.items() if k in _SAVE_COLS} for c in checks]
+        if not rows:
+            return
+        self.client.table("league_checks").insert(rows).execute()
 
     def get_checks_for_run(self, check_run_id: UUID) -> list[dict]:
         result = (

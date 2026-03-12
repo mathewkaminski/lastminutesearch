@@ -167,14 +167,23 @@ def backfill(write: bool = False) -> None:
         return
 
     # --- Write ---
+    # Group by city and UPDATE with .in_() — avoids upsert INSERT issues
     all_updates = pass1 + pass2
-    for i in range(0, len(all_updates), BATCH_SIZE):
-        batch = all_updates[i:i + BATCH_SIZE]
-        client.table("leagues_metadata").upsert(
-            [{"league_id": r["league_id"], "city": r["city"]} for r in batch],
-            on_conflict="league_id"
-        ).execute()
-        logger.info(f"  Updated batch {i // BATCH_SIZE + 1} ({len(batch)} records)")
+    city_to_ids: dict[str, list[str]] = defaultdict(list)
+    for r in all_updates:
+        city_to_ids[r["city"]].append(r["league_id"])
+
+    total_updated = 0
+    for city, ids in city_to_ids.items():
+        for i in range(0, len(ids), BATCH_SIZE):
+            batch_ids = ids[i:i + BATCH_SIZE]
+            client.table("leagues_metadata").update(
+                {"city": city}
+            ).in_("league_id", batch_ids).execute()
+            total_updated += len(batch_ids)
+        logger.info(f"  {city}: {len(ids)} records updated")
+
+    logger.info(f"Total updated: {total_updated}")
 
     logger.info("City backfill complete.")
 

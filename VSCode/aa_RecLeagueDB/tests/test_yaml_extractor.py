@@ -56,24 +56,24 @@ _STUB_LEAGUE_JSON = """{
 }"""
 
 
-def _make_fake_openai_client(captured_prompt: dict):
-    """Return a mock OpenAI client instance that captures the messages sent."""
-    mock_message = MagicMock()
-    mock_message.content = _STUB_LEAGUE_JSON
-
-    mock_choice = MagicMock()
-    mock_choice.message = mock_message
+def _make_fake_anthropic(captured_prompt: dict):
+    """Return a mock anthropic module that captures messages sent to Claude."""
+    mock_content = MagicMock()
+    mock_content.text = _STUB_LEAGUE_JSON
 
     mock_response = MagicMock()
-    mock_response.choices = [mock_choice]
+    mock_response.content = [mock_content]
 
     def fake_create(**kwargs):
         captured_prompt["messages"] = kwargs.get("messages", [])
         return mock_response
 
     mock_client = MagicMock()
-    mock_client.chat.completions.create.side_effect = fake_create
-    return mock_client
+    mock_client.messages.create.side_effect = fake_create
+
+    mock_anthropic = MagicMock()
+    mock_anthropic.Anthropic.return_value = mock_client
+    return mock_anthropic
 
 
 class TestTwoTierExtraction:
@@ -83,7 +83,7 @@ class TestTwoTierExtraction:
 
         import src.extractors.yaml_extractor as mod
 
-        with patch.object(mod, "_get_client", return_value=_make_fake_openai_client(captured_prompt)):
+        with patch.object(mod, "anthropic", _make_fake_anthropic(captured_prompt)):
             mod.extract_league_data_from_yaml(SIMPLE_YAML, url="http://example.com")
 
         prompt_text = str(captured_prompt["messages"])
@@ -95,7 +95,7 @@ class TestTwoTierExtraction:
 
         import src.extractors.yaml_extractor as mod
 
-        with patch.object(mod, "_get_client", return_value=_make_fake_openai_client(captured_prompt)):
+        with patch.object(mod, "anthropic", _make_fake_anthropic(captured_prompt)):
             mod.extract_league_data_from_yaml(
                 DETAIL_WITH_TEXT, url="http://example.com", full_text=FULL_TEXT_WITH_FIELDS
             )
@@ -109,7 +109,7 @@ class TestTwoTierExtraction:
 
         import src.extractors.yaml_extractor as mod
 
-        with patch.object(mod, "_get_client", return_value=_make_fake_openai_client(captured_prompt)):
+        with patch.object(mod, "anthropic", _make_fake_anthropic(captured_prompt)):
             mod.extract_league_data_from_yaml(SIMPLE_YAML, url="http://example.com")
 
         prompt_text = str(captured_prompt["messages"])

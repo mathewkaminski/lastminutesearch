@@ -125,8 +125,10 @@ def load_cached_snapshots(url: str, max_age_days: int = 7) -> dict[str, str] | N
             page_key = parts[1].replace(".yaml", "")
             content = f.read_text(encoding="utf-8")
             # Reject stubs: old @playwright/mcp versions returned resource links
-            # instead of inline trees, producing files with no real accessibility data
-            if len(content) < 1000 or "```yaml" not in content:
+            # instead of inline trees, producing files with no real accessibility data.
+            # agent_summary files are rich markdown (not YAML), exempt from the yaml check.
+            is_agent_summary = page_key == "agent_summary"
+            if len(content) < 1000 or (not is_agent_summary and "```yaml" not in content):
                 logging.getLogger(__name__).warning(
                     f"Cached snapshot {f.name} looks like a stub ({len(content)} bytes), skipping"
                 )

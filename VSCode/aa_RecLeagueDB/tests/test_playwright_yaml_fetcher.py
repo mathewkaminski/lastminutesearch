@@ -23,7 +23,8 @@ class TestFullTextCapture:
     def test_fetch_page_as_yaml_returns_full_text_in_metadata(self):
         """fetch_page_as_yaml() includes full_text in returned metadata."""
         mock_page = MagicMock()
-        mock_page.evaluate.return_value = {"role": "main", "name": "Test"}
+        # First evaluate() is _click_best_sports_tab (expects list); second is accessibility tree
+        mock_page.evaluate.side_effect = [[], {"role": "main", "name": "Test"}]
         mock_page.frames = []  # no iframes
         mock_page.inner_text.return_value = "Monday Volleyball 7:00 PM 10-week season $150/team"
 
@@ -41,7 +42,7 @@ class TestFullTextCapture:
     def test_full_text_truncated_at_max_chars(self):
         """full_text is truncated to max_full_text_chars."""
         mock_page = MagicMock()
-        mock_page.evaluate.return_value = {"role": "main", "name": "x"}
+        mock_page.evaluate.side_effect = [[], {"role": "main", "name": "x"}]
         mock_page.frames = []
         mock_page.inner_text.return_value = "x" * 20000
 

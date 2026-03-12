@@ -102,7 +102,8 @@ class LeagueChecker:
             "url_checked": url,
             "super_scrape_result": result,
         }]
-        self.check_store.save_checks(checks)
+        # SUPER_SCRAPED is not a valid league_checks status — super scraper writes
+        # directly to leagues_metadata, so no per-check row is needed here.
         return CheckRunResult(check_run_id=check_run_id, checks=checks, url=url)
 
     async def _standard_check_async(self, url: str, db_leagues: list[dict] | None = None, progress_callback=None) -> CheckRunResult:

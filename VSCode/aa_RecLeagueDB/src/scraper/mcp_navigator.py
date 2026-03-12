@@ -136,11 +136,20 @@ INSTRUCTIONS:
 4. On EVERY page: run the LEAGUE CARD DETECTION check and navigate to ALL detail URLs found
 5. AFTER EVERY browser_navigate OR browser_click call, you MUST immediately call
    browser_snapshot before doing anything else — this is mandatory, no exceptions
-6. Continue until all league detail pages are visited, then call done()
+6. For EACH league detail page visited: look for "Schedule" or "Standings" links associated
+   with that league and navigate to them. On those pages, identify and count all unique team
+   names listed in the standings table or weekly schedule grid — this is the num_teams value
+   for that league. Note it in your done() summary.
+7. Continue until all league detail AND their schedule/standings pages are visited, then call done()
 
 DO NOT navigate to EXCLUDE links under any circumstances.
 
-After collecting snapshots from all individual league detail pages, call done() with a summary.
+After collecting snapshots from all individual league detail pages and their schedule/standings
+pages, call done() with a summary that includes for each league:
+- League name / day / venue
+- start_time (earliest), time_played_per_week, players_per_side (e.g., 6 for "6v6")
+- stat_holidays (any "no games" dates and reasons)
+- num_teams (count of unique team names from standings or schedule, or null if not yet available)
 """
 
 
@@ -238,6 +247,55 @@ def _resolve_snapshot_content(result_text: str) -> str:
     return result_text
 
 
+async def _call_with_rate_limit_retry(
+    client: Any,
+    *,
+    max_outer_retries: int = 8,
+    **kwargs: Any,
+) -> Any:
+    """Call client.messages.create with outer retry loop for RateLimitError.
+
+    The Anthropic SDK auto-retries up to ~8 times with backoff, but then raises.
+    This adds an outer layer that sleeps a full 65 seconds before trying again,
+    preventing crashes on sustained 30K-token/min rate-limit pressure.
+    """
+    for attempt in range(max_outer_retries):
+        try:
+            return await client.messages.create(**kwargs)
+        except Exception as e:
+            # Only retry on RateLimitError; let everything else propagate
+            if "rate_limit" not in str(e).lower() and "429" not in str(e):
+                raise
+            if attempt < max_outer_retries - 1:
+                wait = 65
+                logger.info(
+                    f"Rate limit hit (outer retry {attempt + 1}/{max_outer_retries}), "
+                    f"waiting {wait}s..."
+                )
+                await asyncio.sleep(wait)
+            else:
+                raise
+
+
+def _trim_message_history(messages: list, keep_turns: int = 5) -> list:
+    """Keep initial user message + last `keep_turns` assistant/user pairs.
+
+    Prevents conversation history from growing unboundedly and sending too many
+    input tokens per minute (Anthropic limit: 30K tokens/min on new accounts).
+    Each trimmed turn reduces the request by ~1-3K tokens.
+    """
+    # messages[0] = initial user instruction (always keep)
+    # messages[1..] = alternating assistant / user-tool-results pairs
+    if len(messages) <= keep_turns * 2 + 1:
+        return messages
+    initial = messages[:1]
+    recent = messages[-(keep_turns * 2):]
+    logger.debug(
+        f"Trimmed history from {len(messages)} → {len(initial) + len(recent)} messages"
+    )
+    return initial + recent
+
+
 async def navigate_and_collect(
     url: str,
     mcp_session: Any,
@@ -274,7 +332,12 @@ async def navigate_and_collect(
     for turn in range(MAX_AGENT_TURNS):
         logger.debug(f"Agent turn {turn + 1}/{MAX_AGENT_TURNS}")
 
-        response = await client.messages.create(
+        # Keep history compact to stay under 30K input-tokens/min.
+        # 5 turns × ~2K tokens/turn + system prompt ≈ 11-12K tokens per request.
+        messages = _trim_message_history(messages, keep_turns=5)
+
+        response = await _call_with_rate_limit_retry(
+            client,
             model="claude-sonnet-4-6",
             max_tokens=4096,
             system=NAVIGATION_SYSTEM_PROMPT,
@@ -366,7 +429,7 @@ async def navigate_and_collect(
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": block.id,
-                "content": result_text[:8000],  # Truncate long snapshots in history
+                "content": result_text[:3000],  # Truncate: keep history small for token/min budget
             })
 
         # Append tool results
@@ -375,6 +438,10 @@ async def navigate_and_collect(
 
         if agent_done:
             break
+
+        # Proactive pacing: 30K tokens/min ÷ ~6K tokens/turn ≈ 5 safe turns/min.
+        # Sleep 10s per turn so we never burst above ~6 calls/min.
+        await asyncio.sleep(10)
 
     logger.info(f"Navigation complete: {len(snapshots)} snapshots collected")
     return snapshots

@@ -53,10 +53,11 @@ def get_leagues(filters: dict | None = None) -> list[dict]:
         List of league record dicts, ordered by quality_score ascending.
     """
     client = get_client()
+    listing_types = (filters or {}).get("listing_types", ["league"])
     q = (
         client.table("leagues_metadata")
         .select("*")
-        .eq("listing_type", "league")
+        .in_("listing_type", listing_types)
         .eq("is_archived", False)
     )
 

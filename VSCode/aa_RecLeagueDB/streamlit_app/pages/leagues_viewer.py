@@ -30,6 +30,14 @@ def _build_filters() -> dict:
     with st.sidebar:
         st.header("Filters")
 
+        listing_types = st.multiselect(
+            "Listing type",
+            options=["league", "dropin", "unknown"],
+            default=["league"],
+            help="Include 'unknown' to inspect unclassified records.",
+        )
+        filters["listing_types"] = listing_types or ["league"]
+
         org = st.text_input("Org name contains", placeholder="e.g. TSSC")
         if org.strip():
             filters["org_search"] = org.strip()
@@ -78,7 +86,7 @@ def _to_csv(rows: list[dict]) -> str:
 
 def render() -> None:
     st.title("Leagues Viewer")
-    st.caption("Active league records only. Drop-ins and unknowns are excluded.")
+    st.caption("Active (non-archived) records. Use the Listing Type filter to include unknowns.")
 
     filters = _build_filters()
 

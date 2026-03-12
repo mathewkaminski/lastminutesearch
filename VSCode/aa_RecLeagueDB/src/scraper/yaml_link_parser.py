@@ -79,8 +79,8 @@ def parse_yaml_links(yaml_tree, base_url: str = "") -> List[DiscoveredLink]:
             for item in node:
                 traverse(item)
         elif isinstance(node, dict):
-            # Check if this node is a link element (role='a')
-            if node.get("role") == "a":
+            # Check if this node is a link element (role='a' or role='link')
+            if node.get("role") in ("a", "link"):
                 anchor_text = node.get("name", "").strip()
                 link_url = node.get("url", "").strip()
 

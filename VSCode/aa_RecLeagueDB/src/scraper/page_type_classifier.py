@@ -5,7 +5,9 @@ import anthropic
 
 logger = logging.getLogger(__name__)
 
-MAX_CLASSIFIER_CHARS = 8000
+_HEAD_CHARS = 3000
+_MID_CHARS = 3000
+_TAIL_CHARS = 2000
 
 _PROMPT = """\
 Classify this rec-sports page. Reply with ONE word only:
@@ -19,6 +21,25 @@ OTHER - homepage, login, about, contact, etc.
 _VALID = {"LEAGUE_DETAIL", "SCHEDULE", "LEAGUE_INDEX", "OTHER"}
 
 
+def _build_snippet(yaml_content: str) -> str:
+    """Sample beginning, middle, and end to surface content buried past nav boilerplate.
+
+    Many sites have deep nav trees that consume the first 20-30K chars of the
+    accessibility YAML before reaching actual page content.  A single head-only
+    window misclassifies those pages as OTHER.
+    """
+    n = len(yaml_content)
+    total = _HEAD_CHARS + _MID_CHARS + _TAIL_CHARS
+    if n <= total:
+        return yaml_content
+
+    head = yaml_content[:_HEAD_CHARS]
+    mid_start = (n - _MID_CHARS) // 2
+    mid = yaml_content[mid_start: mid_start + _MID_CHARS]
+    tail = yaml_content[-_TAIL_CHARS:]
+    return head + "\n[...]\n" + mid + "\n[...]\n" + tail
+
+
 def classify_page(yaml_content: str) -> str:
     """Classify a page's content into one of four types.
 
@@ -29,7 +50,7 @@ def classify_page(yaml_content: str) -> str:
         One of: "LEAGUE_DETAIL", "SCHEDULE", "LEAGUE_INDEX", "OTHER"
         Defaults to "OTHER" on any API error.
     """
-    snippet = yaml_content[:MAX_CLASSIFIER_CHARS]
+    snippet = _build_snippet(yaml_content)
     prompt = _PROMPT.format(yaml_snippet=snippet)
 
     try:

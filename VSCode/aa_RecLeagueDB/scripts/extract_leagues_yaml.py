@@ -33,6 +33,11 @@ if env_file.exists():
                 key, value = line.split("=", 1)
                 os.environ[key.strip()] = value.strip()
 
+from src.scraper.smart_crawler import crawl as smart_crawl
+from src.extractors.yaml_extractor import extract_league_data_from_yaml
+from src.database.snapshot_store import store_page_snapshot, update_snapshot_status
+from src.database.writer import insert_league
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -64,11 +69,6 @@ def extract_leagues_from_url(
     Returns:
         Result dict with stats and extracted leagues
     """
-    from src.scraper.smart_crawler import crawl as smart_crawl
-    from src.extractors.yaml_extractor import extract_league_data_from_yaml
-    from src.database.snapshot_store import store_page_snapshot, update_snapshot_status
-    from src.database.writer import insert_league
-
     logger.info(f"Starting extraction: {url}")
     logger.info(f"  Use cache: {use_cache}, Dry run: {dry_run}")
     if result_id:
@@ -108,15 +108,7 @@ def extract_leagues_from_url(
             page_url: {"yaml": yaml_content, "full_text": full_text}
             for page_url, yaml_content, full_text in crawled_pages
         }
-        page_metadata = {
-            "pages_fetched": len(crawled_pages),
-            "total_bytes": sum(len(d["yaml"].encode()) for d in page_data.values()),
-            "total_tokens": 0,  # not tracked by smart_crawler
-            "page_types": list(page_data.keys()),
-            "category_coverage": category_coverage,
-        }
-
-        logger.info(f"Total size: {page_metadata['total_bytes']:,} bytes")
+        logger.info(f"Total size: {sum(len(d['yaml'].encode()) for d in page_data.values()):,} bytes")
 
         # Step 2: Extract leagues from each YAML
         logger.info("\n" + "="*80)

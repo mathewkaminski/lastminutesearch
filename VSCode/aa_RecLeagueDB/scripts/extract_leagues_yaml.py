@@ -19,6 +19,7 @@ import os
 import sys
 from pathlib import Path
 from typing import List, Dict, Any
+from urllib.parse import urlparse
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -35,8 +36,9 @@ if env_file.exists():
 
 from src.scraper.smart_crawler import crawl as smart_crawl
 from src.extractors.yaml_extractor import extract_league_data_from_yaml
-from src.database.snapshot_store import store_page_snapshot, update_snapshot_status
+from src.database.snapshot_store import store_page_snapshot, update_snapshot_status, store_gap_report
 from src.database.writer import insert_league
+from src.extractors.gap_reporter import compute_field_coverage
 
 logging.basicConfig(
     level=logging.INFO,
@@ -204,6 +206,16 @@ def extract_leagues_from_url(
                     error_msg = f"Failed to store {page_url}: {e}"
                     logger.error(error_msg)
                     result["errors"].append(error_msg)
+
+        # Step 4: Compute and store field coverage gap report
+        gap_report = compute_field_coverage(all_leagues)
+        domain = urlparse(url).netloc
+        if not dry_run:
+            store_gap_report(domain, gap_report)
+        logger.info(
+            f"Field coverage: {gap_report['coverage_pct']:.1f}% "
+            f"({len(gap_report['covered'])}/{len(gap_report['covered']) + len(gap_report['missing'])} extractable fields)"
+        )
 
         result["success"] = True
         return result

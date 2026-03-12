@@ -193,3 +193,28 @@ def update_snapshot_status(
     except Exception as e:
         logger.error(f"Failed to update snapshot: {snapshot_id}", exc_info=True)
         return False
+
+
+def store_gap_report(domain: str, gap_report: dict) -> None:
+    """Store field coverage gap report in page_snapshots metadata for domain.
+
+    Args:
+        domain: Base domain (e.g. "ottawavolleysixes.com")
+        gap_report: Output from gap_reporter.compute_field_coverage()
+    """
+    client = get_client()
+    result = (
+        client.table("page_snapshots")
+        .select("id, metadata")
+        .eq("domain", domain)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if result.data:
+        row = result.data[0]
+        existing_meta = row.get("metadata") or {}
+        existing_meta["gap_report"] = gap_report
+        client.table("page_snapshots").update(
+            {"metadata": existing_meta}
+        ).eq("id", row["id"]).execute()

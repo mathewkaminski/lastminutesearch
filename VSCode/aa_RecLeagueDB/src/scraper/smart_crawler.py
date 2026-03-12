@@ -17,12 +17,12 @@ import yaml as yaml_lib
 from urllib.parse import urlparse
 
 from src.scraper.playwright_yaml_fetcher import fetch_page_as_yaml
-from src.scraper.yaml_link_parser import parse_yaml_links, score_links
+from src.scraper.yaml_link_parser import parse_yaml_links, score_links, infer_link_category
 from src.scraper.page_type_classifier import classify_page
 
 logger = logging.getLogger(__name__)
 
-MAX_DETAIL_LINKS = 20  # max unvisited same-domain links to follow from one LEAGUE_INDEX page
+MAX_DETAIL_LINKS = 30  # max unvisited same-domain links to follow from one LEAGUE_INDEX page
 
 
 def _same_domain(url: str, base_url: str) -> bool:
@@ -48,6 +48,7 @@ def _follow_index_links(
     league_pages: list,
     max_index_depth: int,
     current_depth: int,
+    use_cache: bool = True,
     force_refresh: bool = False,
 ) -> None:
     """Fetch and classify internal links found on a LEAGUE_INDEX page.
@@ -63,6 +64,8 @@ def _follow_index_links(
         league_pages: Accumulator list (mutated in-place)
         max_index_depth: Maximum recursion depth for nested indexes
         current_depth: Current recursion depth (starts at 1)
+        use_cache: Whether to use the page cache
+        force_refresh: If True, bypass cache and re-fetch all pages
     """
     try:
         tree = yaml_lib.safe_load(index_yaml)
@@ -91,17 +94,18 @@ def _follow_index_links(
     for link in candidates:
         visited.add(link.url)  # already normalized above
         try:
-            page_yaml, _ = fetch_page_as_yaml(link.url, force_refresh=force_refresh)
+            page_yaml, page_meta = fetch_page_as_yaml(link.url, use_cache=use_cache, force_refresh=force_refresh)
             page_type = classify_page(page_yaml)
+            full_text = page_meta.get("full_text", "") if page_meta else ""
 
             if page_type in ("LEAGUE_DETAIL", "SCHEDULE"):
                 logger.info(f"[Index->{page_type}] {link.url}")
-                league_pages.append((link.url, page_yaml))
+                league_pages.append((link.url, page_yaml, full_text))
 
             elif page_type == "LEAGUE_INDEX":
                 logger.info(f"[Index->INDEX depth={current_depth}] {link.url}")
                 # Also collect the index page itself (partial data better than nothing)
-                league_pages.append((link.url, page_yaml))
+                league_pages.append((link.url, page_yaml, full_text))
                 if current_depth < max_index_depth:
                     _follow_index_links(
                         index_url=link.url,
@@ -111,6 +115,7 @@ def _follow_index_links(
                         league_pages=league_pages,
                         max_index_depth=max_index_depth,
                         current_depth=current_depth + 1,
+                        use_cache=use_cache,
                         force_refresh=force_refresh,
                     )
             # OTHER: skip
@@ -123,45 +128,61 @@ def crawl(
     start_url: str,
     max_index_depth: int = 2,
     primary_link_min_score: int = 100,
+    use_cache: bool = True,
     force_refresh: bool = False,
-) -> list:
+) -> tuple[list[tuple[str, str, str]], dict[str, list[str]]]:
     """Crawl a sports league website, return pages confirmed to have league data.
 
     Args:
         start_url: Home page URL
         max_index_depth: Maximum recursion depth when following LEAGUE_INDEX pages
         primary_link_min_score: Minimum score for a link to be followed in Step A
+        use_cache: Whether to use the page cache
         force_refresh: If True, bypass cache and re-fetch all pages
 
     Returns:
-        List of (url, yaml_content) for pages classified as
-        LEAGUE_DETAIL, SCHEDULE, or LEAGUE_INDEX.
+        Tuple of:
+          - List of (url, yaml_content, full_text) for pages classified as
+            LEAGUE_DETAIL, SCHEDULE, or LEAGUE_INDEX.
+          - Dict mapping field category → list of URLs seen for that category.
     """
+    if not use_cache:
+        force_refresh = True
+
     visited: set = set()
-    league_pages: list = []
+    collected_pages: list = []
+    category_coverage: dict[str, list[str]] = {
+        "SCHEDULE": [],
+        "REGISTRATION": [],
+        "POLICY": [],
+        "VENUE": [],
+        "DETAIL": [],
+    }
 
     parsed_start = urlparse(start_url)
     root_url = f"{parsed_start.scheme}://{parsed_start.netloc}/"
 
     # --- Layer 0: Start URL ---
     logger.info(f"Fetching start URL: {start_url}")
-    home_yaml, _ = fetch_page_as_yaml(start_url, force_refresh=force_refresh)
+    home_yaml, home_meta = fetch_page_as_yaml(start_url, use_cache=use_cache, force_refresh=force_refresh)
     visited.add(_strip_fragment(start_url))
+    home_full_text = home_meta.get("full_text", "") if home_meta else ""
 
     # Always collect start page — home pages carry fee/schedule data even when
     # classified OTHER (e.g. a login modal makes Haiku say OTHER but fee text is present).
     home_type = classify_page(home_yaml)
     logger.info(f"Start URL classified as: {home_type}")
-    league_pages.append((start_url, home_yaml))
+    collected_pages.append((start_url, home_yaml, home_full_text))
     if home_type == "LEAGUE_INDEX":
         _follow_index_links(
             index_url=start_url,
             index_yaml=home_yaml,
             base_url=start_url,
             visited=visited,
-            league_pages=league_pages,
+            league_pages=collected_pages,
             max_index_depth=max_index_depth,
             current_depth=1,
+            use_cache=use_cache,
             force_refresh=force_refresh,
         )
 
@@ -170,19 +191,21 @@ def crawl(
     if root_stripped not in visited:
         visited.add(root_stripped)
         logger.info(f"Start URL is a sub-page — also fetching root: {root_url}")
-        root_yaml, _ = fetch_page_as_yaml(root_url, force_refresh=force_refresh)
+        root_yaml, root_meta = fetch_page_as_yaml(root_url, use_cache=use_cache, force_refresh=force_refresh)
         root_type = classify_page(root_yaml)
+        root_full_text = root_meta.get("full_text", "") if root_meta else ""
         logger.info(f"Root classified as: {root_type}")
-        league_pages.append((root_url, root_yaml))
+        collected_pages.append((root_url, root_yaml, root_full_text))
         if root_type == "LEAGUE_INDEX":
             _follow_index_links(
                 index_url=root_url,
                 index_yaml=root_yaml,
                 base_url=root_url,
                 visited=visited,
-                league_pages=league_pages,
+                league_pages=collected_pages,
                 max_index_depth=max_index_depth,
                 current_depth=1,
+                use_cache=use_cache,
                 force_refresh=force_refresh,
             )
 
@@ -213,28 +236,36 @@ def crawl(
 
     # --- Step A: Visit ALL primary links ---
     for link in primary_links:
+        # Infer and record category coverage
+        if link.field_category is None:
+            link.field_category = infer_link_category(link.anchor_text, link.page_type)
+        if link.field_category and link.field_category in category_coverage:
+            category_coverage[link.field_category].append(link.url)
+
         if link.url in visited:
             continue
         visited.add(link.url)  # link.url is already normalized from above
         try:
-            page_yaml, _ = fetch_page_as_yaml(link.url, force_refresh=force_refresh)
+            page_yaml, page_meta = fetch_page_as_yaml(link.url, use_cache=use_cache, force_refresh=force_refresh)
             page_type = classify_page(page_yaml)
+            full_text = page_meta.get("full_text", "") if page_meta else ""
 
             if page_type in ("LEAGUE_DETAIL", "SCHEDULE"):
                 logger.info(f"[Step A {page_type}] {link.url}")
-                league_pages.append((link.url, page_yaml))
+                collected_pages.append((link.url, page_yaml, full_text))
 
             elif page_type == "LEAGUE_INDEX":
                 logger.info(f"[Step A LEAGUE_INDEX] {link.url}")
-                league_pages.append((link.url, page_yaml))
+                collected_pages.append((link.url, page_yaml, full_text))
                 _follow_index_links(
                     index_url=link.url,
                     index_yaml=page_yaml,
                     base_url=start_url,
                     visited=visited,
-                    league_pages=league_pages,
+                    league_pages=collected_pages,
                     max_index_depth=max_index_depth,
                     current_depth=1,
+                    use_cache=use_cache,
                     force_refresh=force_refresh,
                 )
             # OTHER: skip
@@ -242,7 +273,7 @@ def crawl(
         except Exception as e:
             logger.warning(f"[Step A] Fetch failed {link.url}: {e}")
 
-    if not league_pages:
+    if not collected_pages:
         logger.warning(f"No league pages found for {start_url}")
 
-    return league_pages
+    return collected_pages, category_coverage

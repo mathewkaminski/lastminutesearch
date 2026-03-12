@@ -36,10 +36,10 @@ def test_crawl_returns_home_page_when_home_has_leagues():
         mock_classify.return_value = "LEAGUE_DETAIL"
 
         from src.scraper.smart_crawler import crawl
-        result = crawl("https://example.com")
+        pages, _ = crawl("https://example.com")
 
-    assert len(result) == 1
-    assert result[0][0] == "https://example.com"
+    assert len(pages) == 1
+    assert pages[0][0] == "https://example.com"
 
 
 def test_crawl_visits_all_primary_links_regardless_of_early_yes():
@@ -117,12 +117,12 @@ def test_crawl_returns_home_and_primary_when_both_have_leagues():
         patch("src.scraper.smart_crawler.classify_page", side_effect=fake_classify),
     ):
         from src.scraper.smart_crawler import crawl
-        result = crawl("https://example.com")
+        pages, _ = crawl("https://example.com")
 
-    urls = [url for url, _ in result]
+    urls = [url for url, _yaml, _ft in pages]
     assert "https://example.com" in urls
     assert "https://example.com/register" in urls
-    assert len(result) == 2
+    assert len(pages) == 2
 
 
 def test_crawl_returns_empty_when_all_pages_are_other():
@@ -135,9 +135,9 @@ def test_crawl_returns_empty_when_all_pages_are_other():
         patch("src.scraper.smart_crawler.classify_page", return_value="OTHER"),
     ):
         from src.scraper.smart_crawler import crawl
-        result = crawl("https://example.com")
+        pages, _ = crawl("https://example.com")
 
-    assert result == []
+    assert pages == []
 
 
 # ---------------------------------------------------------------------------
@@ -172,9 +172,9 @@ def test_crawl_follows_detail_links_from_league_index():
         patch("src.scraper.smart_crawler.classify_page", side_effect=fake_classify),
     ):
         from src.scraper.smart_crawler import crawl
-        result = crawl("https://example.com")
+        pages, _ = crawl("https://example.com")
 
-    urls = [url for url, _ in result]
+    urls = [url for url, _yaml, _ft in pages]
     assert "https://example.com/detail-a" in urls
     assert "https://example.com/detail-b" in urls
     assert "https://example.com/season" in urls  # index page itself is also collected
@@ -245,9 +245,9 @@ def test_crawl_skips_other_primary_pages():
         patch("src.scraper.smart_crawler.classify_page", side_effect=fake_classify),
     ):
         from src.scraper.smart_crawler import crawl
-        result = crawl("https://example.com")
+        pages, _ = crawl("https://example.com")
 
-    urls = [url for url, _ in result]
+    urls = [url for url, _yaml, _ft in pages]
     assert "https://example.com/about" not in urls
     assert "https://example.com/leagues" in urls
 
@@ -277,3 +277,55 @@ def test_crawl_deduplicates_hash_fragment_variants():
     # /leagues should only be fetched once (not once for /leagues and once for /leagues#section)
     fetched_without_fragments = [u.split("#")[0] for u in visited_urls]
     assert fetched_without_fragments.count("https://example.com/leagues") == 1
+
+
+# ---------------------------------------------------------------------------
+# New tests: MAX_DETAIL_LINKS cap and category_coverage return value
+# ---------------------------------------------------------------------------
+
+class TestLinkCapAndCategoryCoverage:
+    def test_max_detail_links_is_30(self):
+        from src.scraper import smart_crawler
+        assert smart_crawler.MAX_DETAIL_LINKS == 30
+
+    def test_crawl_returns_category_coverage(self):
+        """crawl() returns (pages, category_coverage) tuple where pages are (url, yaml, full_text) triples."""
+        with (
+            patch("src.scraper.smart_crawler.fetch_page_as_yaml") as mock_fetch,
+            patch("src.scraper.smart_crawler.classify_page") as mock_classify,
+        ):
+            mock_fetch.return_value = ("- role: main\n  name: Leagues", {"full_text": ""})
+            mock_classify.return_value = "LEAGUE_DETAIL"
+
+            from src.scraper.smart_crawler import crawl
+            result = crawl("https://example.com")
+
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        pages, coverage = result
+        assert isinstance(pages, list)
+        assert len(pages[0]) == 3  # (url, yaml, full_text) triples
+        assert isinstance(coverage, dict)
+        assert set(coverage.keys()) == {"SCHEDULE", "REGISTRATION", "POLICY", "VENUE", "DETAIL"}
+
+    def test_category_coverage_populated_for_visited_pages(self):
+        """Pages with tagged links contribute to category_coverage."""
+        home_yaml = _make_yaml([("/schedule", "Schedule"), ("/register", "Register")])
+
+        with (
+            patch("src.scraper.smart_crawler.fetch_page_as_yaml") as mock_fetch,
+            patch("src.scraper.smart_crawler.classify_page") as mock_classify,
+        ):
+            def fetch_side_effect(url, **kw):
+                if url == "https://example.com":
+                    return (home_yaml, {"full_text": ""})
+                return ("- role: main\n  name: League Detail", {"full_text": ""})
+
+            mock_fetch.side_effect = fetch_side_effect
+            mock_classify.return_value = "LEAGUE_DETAIL"
+
+            from src.scraper.smart_crawler import crawl
+            _pages, coverage = crawl("https://example.com")
+
+        assert "https://example.com/schedule" in coverage["SCHEDULE"]
+        assert "https://example.com/register" in coverage["REGISTRATION"]

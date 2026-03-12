@@ -336,3 +336,70 @@ class TestLinkCapAndCategoryCoverage:
 
         assert "https://example.com/schedule" in coverage["SCHEDULE"]
         assert "https://example.com/register" in coverage["REGISTRATION"]
+
+
+# ---------------------------------------------------------------------------
+# New tests: Adaptive depth-3 for uncovered categories
+# ---------------------------------------------------------------------------
+
+class TestAdaptiveDepth:
+    def test_adaptive_depth_follows_category_links_when_uncovered(self):
+        """When REGISTRATION has zero pages after depth-2, crawl follows reg links at depth-3."""
+        home_yaml = _make_yaml([
+            ("/register", "Registration"),  # would score < 100 normally
+        ])
+        register_yaml = "- role: main\n  name: Register for leagues"
+
+        call_count = {"n": 0}
+
+        with (
+            patch("src.scraper.smart_crawler.fetch_page_as_yaml") as mock_fetch,
+            patch("src.scraper.smart_crawler.classify_page") as mock_classify,
+        ):
+            def fetch_side(url, **kw):
+                call_count["n"] += 1
+                if url == "https://example.com/":
+                    return (home_yaml, {"full_text": ""})
+                return (register_yaml, {"full_text": ""})
+
+            mock_fetch.side_effect = fetch_side
+            mock_classify.return_value = "LEAGUE_DETAIL"
+
+            from src.scraper.smart_crawler import crawl
+            pages, coverage = crawl(
+                "https://example.com/",
+                primary_link_min_score=200,  # force /register to be skipped in normal pass
+            )
+
+        # The adaptive pass should have fetched /register
+        fetched_urls = [p[0] for p in pages]
+        assert "https://example.com/register" in fetched_urls
+        assert "https://example.com/register" in coverage["REGISTRATION"]
+
+    def test_adaptive_depth_skips_already_covered_categories(self):
+        """If SCHEDULE is already covered, no extra depth-3 fetch for schedule links."""
+        home_yaml = _make_yaml([
+            ("/schedule", "Schedule"),
+            ("/schedule2", "More Schedule"),
+        ])
+
+        fetch_calls = []
+
+        with (
+            patch("src.scraper.smart_crawler.fetch_page_as_yaml") as mock_fetch,
+            patch("src.scraper.smart_crawler.classify_page") as mock_classify,
+        ):
+            def fetch_side(url, **kw):
+                fetch_calls.append(url)
+                return ("- role: main\n  name: Page", {"full_text": ""})
+
+            mock_fetch.side_effect = fetch_side
+            mock_classify.return_value = "SCHEDULE"
+
+            from src.scraper.smart_crawler import crawl
+            crawl("https://example.com/", primary_link_min_score=50)
+
+        # /schedule2 should not be fetched in an extra adaptive pass
+        # (SCHEDULE is already covered by /schedule from the normal pass)
+        schedule2_count = fetch_calls.count("https://example.com/schedule2")
+        assert schedule2_count <= 1  # at most once from normal pass, not extra adaptive pass

@@ -273,6 +273,38 @@ def crawl(
         except Exception as e:
             logger.warning(f"[Step A] Fetch failed {link.url}: {e}")
 
+    # Adaptive depth-3: fetch category-targeted links for uncovered categories
+    uncovered = [cat for cat, urls in category_coverage.items() if not urls]
+    if uncovered:
+        # Get home page yaml content from collected_pages
+        # The start URL is stored as `start_url` variable in crawl() — use the exact variable name
+        home_yaml_content = next(
+            (y for u, y, _ft in collected_pages if u == start_url), None
+        )
+        if home_yaml_content:
+            home_tree = yaml_lib.safe_load(home_yaml_content)
+            from src.scraper.yaml_link_parser import extract_navigation_links
+            adaptive_links = extract_navigation_links(
+                home_tree, start_url, min_score=60  # lowered threshold
+            )
+            visited_urls = {p[0] for p in collected_pages}
+            for cat in uncovered:
+                cat_links = [
+                    lnk for lnk in adaptive_links
+                    if lnk.field_category == cat and lnk.url not in visited_urls
+                ][:3]  # max 3 per uncovered category
+                for lnk in cat_links:
+                    page_yaml, page_meta = fetch_page_as_yaml(
+                        lnk.url,
+                        use_cache=use_cache,
+                        force_refresh=force_refresh,
+                    )
+                    if page_yaml:
+                        full_text = page_meta.get("full_text", "") if page_meta else ""
+                        collected_pages.append((lnk.url, page_yaml, full_text))
+                        category_coverage[cat].append(lnk.url)
+                        visited_urls.add(lnk.url)
+
     if not collected_pages:
         logger.warning(f"No league pages found for {start_url}")
 

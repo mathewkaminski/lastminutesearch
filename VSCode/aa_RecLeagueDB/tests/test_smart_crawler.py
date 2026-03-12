@@ -36,10 +36,10 @@ def test_crawl_returns_home_page_when_home_has_leagues():
         mock_classify.return_value = "LEAGUE_DETAIL"
 
         from src.scraper.smart_crawler import crawl
-        pages, _ = crawl("https://example.com")
+        pages, _ = crawl("https://example.com/")
 
     assert len(pages) == 1
-    assert pages[0][0] == "https://example.com"
+    assert pages[0][0] == "https://example.com/"
 
 
 def test_crawl_visits_all_primary_links_regardless_of_early_yes():
@@ -105,7 +105,7 @@ def test_crawl_returns_home_and_primary_when_both_have_leagues():
     home_yaml = _make_yaml([("/register", "Register")])
 
     def fake_fetch(url, **kwargs):
-        if url == "https://example.com":
+        if url == "https://example.com/":
             return (home_yaml, {})
         return (PRIMARY_LEAGUE_YAML, {})
 
@@ -117,16 +117,20 @@ def test_crawl_returns_home_and_primary_when_both_have_leagues():
         patch("src.scraper.smart_crawler.classify_page", side_effect=fake_classify),
     ):
         from src.scraper.smart_crawler import crawl
-        pages, _ = crawl("https://example.com")
+        pages, _ = crawl("https://example.com/")
 
     urls = [url for url, _yaml, _ft in pages]
-    assert "https://example.com" in urls
+    assert "https://example.com/" in urls
     assert "https://example.com/register" in urls
     assert len(pages) == 2
 
 
-def test_crawl_returns_empty_when_all_pages_are_other():
-    """Returns [] when home and all primary pages classify as OTHER."""
+def test_crawl_returns_only_home_when_all_pages_are_other():
+    """When home and all primary pages classify as OTHER, only the home page is returned.
+
+    The crawler always collects the start URL (home pages carry fee/schedule data
+    even when classified OTHER). Non-home OTHER pages are skipped.
+    """
     home_yaml = _make_yaml([("/register", "Register")])
 
     with (
@@ -135,9 +139,12 @@ def test_crawl_returns_empty_when_all_pages_are_other():
         patch("src.scraper.smart_crawler.classify_page", return_value="OTHER"),
     ):
         from src.scraper.smart_crawler import crawl
-        pages, _ = crawl("https://example.com")
+        pages, _ = crawl("https://example.com/")
 
-    assert pages == []
+    urls = [url for url, _yaml, _ft in pages]
+    assert len(pages) == 1
+    assert "https://example.com/" in urls
+    assert "https://example.com/register" not in urls
 
 
 # ---------------------------------------------------------------------------

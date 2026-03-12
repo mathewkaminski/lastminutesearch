@@ -11,8 +11,16 @@ from src.config.sss_codes import validate_sss_code
 
 logger = logging.getLogger(__name__)
 
-# Initialize OpenAI client
-client = OpenAI()
+# Lazy-initialized OpenAI client (avoids failing at import when key is missing)
+_client: Optional["OpenAI"] = None
+
+
+def _get_client() -> "OpenAI":
+    global _client
+    if _client is None:
+        _client = OpenAI()
+    return _client
+
 
 # Token encoding
 encoding = tiktoken.get_encoding("cl100k_base")
@@ -20,8 +28,9 @@ encoding = tiktoken.get_encoding("cl100k_base")
 
 def extract_league_data_from_yaml(
     yaml_content: str,
-    url: str,
-    metadata: Optional[Dict[str, Any]] = None
+    url: str = "",
+    metadata: Optional[Dict[str, Any]] = None,
+    full_text: str = "",
 ) -> List[Dict[str, Any]]:
     """Extract ALL structured league metadata from YAML using GPT-4o.
 
@@ -71,7 +80,7 @@ def extract_league_data_from_yaml(
         logger.info(f"  YAML size: {yaml_size:,} bytes, ~{token_count:,} tokens")
 
     # Step 1: Build extraction prompt with YAML structure guide
-    prompt = _build_yaml_extraction_prompt(yaml_content, url)
+    prompt = _build_yaml_extraction_prompt(yaml_content, url, full_text=full_text)
     logger.debug(f"Prompt length: {len(prompt)} chars")
 
     # Step 2: Call GPT-4o
@@ -133,19 +142,98 @@ def extract_league_data_from_yaml(
     return processed_leagues
 
 
-def _build_yaml_extraction_prompt(yaml_content: str, url: str) -> str:
+def _build_yaml_extraction_prompt(yaml_content: str, url: str, full_text: str = "") -> str:
     """Build extraction prompt for LLM with YAML structure guide.
+
+    When full_text is provided, uses a two-tier prompt that combines the YAML
+    accessibility tree with the full page text for richer field extraction.
 
     Args:
         yaml_content: YAML accessibility tree content
         url: Source URL
+        full_text: Optional full page text for detail pages
 
     Returns:
         Formatted prompt string
     """
     sss_ref = _build_sss_reference()
 
-    prompt = f"""You are a data extraction specialist for recreational sports leagues.
+    schema_instructions = f"""SPORT/SEASON CODES (SSS Format - 3 digits: XYY):
+{sss_ref}
+
+OUTPUT SCHEMA (use exact field names, return null for missing fields):
+{{
+  "leagues": [
+    {{
+      "organization_name": "string (required) - League organization name",
+      "sport_season_code": "string (required) - 3-digit SSS code (e.g., '201')",
+      "season_start_date": "string YYYY-MM-DD or null",
+      "season_end_date": "string YYYY-MM-DD or null",
+      "day_of_week": "string (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) or null",
+      "start_time": "string HH:MM:SS (earliest listed start time) or null",
+      "num_weeks": "integer or null",
+      "time_played_per_week": "integer (game duration in minutes, e.g. 60) or null",
+      "stat_holidays": "array of objects [{{"date": "YYYY-MM-DD", "reason": "string"}}] for excluded/no-game dates, or null",
+      "venue_name": "string or null",
+      "competition_level": "string (e.g., Recreational, Intermediate, Competitive) or null",
+      "gender_eligibility": "string (Mens|Womens|CoEd|Other) or null",
+      "players_per_side": "integer (players per side on court/field, e.g. 4 for '4v4', 6 for '6v6') or null",
+      "team_fee": "number (in dollars) or null",
+      "individual_fee": "number (in dollars) or null",
+      "registration_deadline": "string YYYY-MM-DD or null",
+      "num_teams": "integer (count of unique team names if visible in standings/schedule) or null",
+      "slots_left": "integer or null",
+      "has_referee": "boolean or null",
+      "requires_insurance": "boolean or null",
+      "insurance_policy_link": "string (URL to insurance or waiver policy page) or null"
+    }}
+  ]
+}}
+
+INSTRUCTIONS:
+- Extract ALL distinct leagues from this page
+- If a page lists multiple divisions/formats (e.g., 6v6 and 8v8), extract both as separate leagues
+- For dates, infer year from context (e.g., "June-August" = current/next year context)
+- For time, convert "7pm" → "19:00:00", "7:30pm" → "19:30:00". If multiple start times are listed (rotating schedule), use the EARLIEST one.
+- For time_played_per_week: look for patterns like "60 min", "1 hour", "90 minutes" in the league description or detail section.
+- For stat_holidays: look for "No games on", "No game", "except", or holiday callouts. Convert to [{{date, reason}}] array. If month/day listed without year, infer year from season context.
+- For players_per_side: extract from format strings like "6 v 6" → 6, "4 v 4" → 4, "5v5" → 5.
+- For prices, extract the team_fee (most common) from currency patterns like "$875" or "$ 875 + TAX"
+- For num_teams: grab from ANY source — explicit "X teams registered/enrolled", counting unique team names in a standings/schedule table, or any visible "N of X spots filled" language. Count ALL teams across all divisions for a given day/venue/gender combo. Do NOT infer or fabricate.
+- For insurance_policy_link: extract any URL linked from insurance/waiver text (e.g., "policy at https://...", "insurance form here")
+- Use null for any missing field
+- Return ONLY the JSON object with "leagues" array, no other text"""
+
+    if full_text.strip():
+        prompt = f"""You are extracting structured league data. You have two inputs:
+
+1. YAML ACCESSIBILITY TREE - shows page structure, headings, links, form elements
+2. FULL PAGE TEXT - contains the actual text content visible to users
+
+Use the YAML tree to understand page layout and navigation.
+Extract ALL field values from the full page text. Look carefully for:
+- Specific times ("7:00 PM", "games start at 8pm")
+- Durations ("10-week season", "60-minute games", "12 games")
+- Dates ("Season runs Jan 6 - Mar 24", "Registration closes Dec 15")
+- Fees ("$150/player", "$1200/team")
+- Venue details ("Games played at Greenwood Arena")
+- Format details ("6v6", "refereed games", "insurance required")
+- Insurance policy URLs
+
+These values are often in paragraph text, list items, or table cells.
+Do NOT return null if the information appears anywhere in the text.
+
+--- YAML ACCESSIBILITY TREE ---
+{yaml_content}
+
+--- FULL PAGE TEXT ---
+{full_text}
+
+{schema_instructions}
+
+JSON Output:"""
+    else:
+        prompt = f"""You are a data extraction specialist for recreational sports leagues.
 
 Extract ALL leagues from this YAML accessibility tree and return ONLY valid JSON (no other text).
 
@@ -198,49 +286,7 @@ From this, extract:
 - time_played_per_week: 60 (minutes)
 - team_fee: 875.00
 
-SPORT/SEASON CODES (SSS Format - 3 digits: XYY):
-{sss_ref}
-
-OUTPUT SCHEMA (use exact field names, return null for missing fields):
-{{
-  "leagues": [
-    {{
-      "organization_name": "string (required) - League organization name",
-      "sport_season_code": "string (required) - 3-digit SSS code (e.g., '201')",
-      "season_start_date": "string YYYY-MM-DD or null",
-      "season_end_date": "string YYYY-MM-DD or null",
-      "day_of_week": "string (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) or null",
-      "start_time": "string HH:MM:SS (earliest listed start time) or null",
-      "num_weeks": "integer or null",
-      "time_played_per_week": "integer (game duration in minutes, e.g. 60) or null",
-      "stat_holidays": "array of objects [{{"date": "YYYY-MM-DD", "reason": "string"}}] for excluded/no-game dates, or null",
-      "venue_name": "string or null",
-      "competition_level": "string (e.g., Recreational, Intermediate, Competitive) or null",
-      "gender_eligibility": "string (Mens|Womens|CoEd|Other) or null",
-      "players_per_side": "integer (players per side on court/field, e.g. 4 for '4v4', 6 for '6v6') or null",
-      "team_fee": "number (in dollars) or null",
-      "individual_fee": "number (in dollars) or null",
-      "registration_deadline": "string YYYY-MM-DD or null",
-      "num_teams": "integer (count of unique team names if visible in standings/schedule) or null",
-      "slots_left": "integer or null",
-      "has_referee": "boolean or null",
-      "requires_insurance": "boolean or null"
-    }}
-  ]
-}}
-
-INSTRUCTIONS:
-- Extract ALL distinct leagues from this page
-- If a page lists multiple divisions/formats (e.g., 6v6 and 8v8), extract both as separate leagues
-- For dates, infer year from context (e.g., "June-August" = current/next year context)
-- For time, convert "7pm" → "19:00:00", "7:30pm" → "19:30:00". If multiple start times are listed (rotating schedule), use the EARLIEST one.
-- For time_played_per_week: look for patterns like "60 min", "1 hour", "90 minutes" in the league description or detail section.
-- For stat_holidays: look for "No games on", "No game", "except", or holiday callouts. Convert to [{{date, reason}}] array. If month/day listed without year, infer year from season context.
-- For players_per_side: extract from format strings like "6 v 6" → 6, "4 v 4" → 4, "5v5" → 5.
-- For prices, extract the team_fee (most common) from currency patterns like "$875" or "$ 875 + TAX"
-- For num_teams: grab from ANY source — explicit "X teams registered/enrolled", counting unique team names in a standings/schedule table, or any visible "N of X spots filled" language. Count ALL teams across all divisions for a given day/venue/gender combo. Do NOT infer or fabricate.
-- Use null for any missing field
-- Return ONLY the JSON object with "leagues" array, no other text
+{schema_instructions}
 
 YAML ACCESSIBILITY TREE:
 {yaml_content}
@@ -307,7 +353,7 @@ def _call_gpt4(prompt: str, model: str = "gpt-4o", max_retries: int = 2) -> Dict
         try:
             logger.debug(f"Calling {model} (attempt {attempt}/{max_retries})")
 
-            response = client.chat.completions.create(
+            response = _get_client().chat.completions.create(
                 model=model,
                 messages=[
                     {

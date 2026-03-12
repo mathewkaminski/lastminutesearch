@@ -118,10 +118,15 @@ def extract_leagues_from_url(
         all_leagues = []
         for page_url, data in page_data.items():
             yaml_content = data["yaml"]
+            full_text = data.get("full_text", "")
             logger.info(f"\nExtracting from {page_url}...")
 
             try:
-                leagues = extract_league_data_from_yaml(yaml_content, url)
+                leagues = extract_league_data_from_yaml(
+                    yaml_content,
+                    url=page_url,
+                    full_text=full_text,
+                )
                 result["leagues_by_page"][page_url] = len(leagues)
                 all_leagues.extend(leagues)
 

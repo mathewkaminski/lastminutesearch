@@ -17,7 +17,7 @@ import yaml as yaml_lib
 from urllib.parse import urlparse
 
 from src.scraper.playwright_yaml_fetcher import fetch_page_as_yaml
-from src.scraper.yaml_link_parser import parse_yaml_links, score_links, infer_link_category
+from src.scraper.yaml_link_parser import parse_yaml_links, score_links, infer_link_category, extract_navigation_links
 from src.scraper.page_type_classifier import classify_page
 
 logger = logging.getLogger(__name__)
@@ -283,7 +283,6 @@ def crawl(
         )
         if home_yaml_content:
             home_tree = yaml_lib.safe_load(home_yaml_content)
-            from src.scraper.yaml_link_parser import extract_navigation_links
             adaptive_links = extract_navigation_links(
                 home_tree, start_url, min_score=60  # lowered threshold
             )

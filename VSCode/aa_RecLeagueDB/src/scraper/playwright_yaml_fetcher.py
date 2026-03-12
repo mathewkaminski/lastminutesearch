@@ -66,6 +66,7 @@ def fetch_page_as_yaml(
     use_cache: bool = True,
     force_refresh: bool = False,
     wait_time: int = 30,
+    max_full_text_chars: int = 15000,
 ) -> Tuple[str, dict]:
     """Fetch page accessibility tree as YAML using JavaScript evaluation.
 
@@ -89,6 +90,8 @@ def fetch_page_as_yaml(
         cached_yaml, cached_meta = load_yaml_from_cache(url)
         if cached_yaml is not None:
             logger.info(f"Loaded from cache: {url}")
+            if "full_text" not in cached_meta:
+                cached_meta["full_text"] = ""
             return cached_yaml, cached_meta
 
     logger.info(f"Fetching YAML snapshot: {url}")
@@ -123,6 +126,15 @@ def fetch_page_as_yaml(
             logger.info("Extracting accessibility tree...")
             accessibility_tree = page.evaluate(EXTRACT_ACCESSIBILITY_TREE_JS)
 
+            # Capture full rendered text for Tier-2 extraction
+            # MUST be before page.close()
+            try:
+                full_text = page.inner_text("body") or ""
+                if max_full_text_chars and len(full_text) > max_full_text_chars:
+                    full_text = full_text[:max_full_text_chars]
+            except Exception:
+                full_text = ""
+
             # Close browser
             page.close()
             context.close()
@@ -144,6 +156,7 @@ def fetch_page_as_yaml(
 
             metadata["yaml_size_bytes"] = yaml_bytes
             metadata["token_estimate"] = tokens
+            metadata["full_text"] = full_text
 
             logger.info(f"Success: {yaml_bytes:,} bytes, ~{tokens:,} tokens")
 

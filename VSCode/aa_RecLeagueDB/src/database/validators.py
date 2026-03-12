@@ -85,6 +85,9 @@ def calculate_quality_score(data: dict) -> int:
         "venue_name",
         "competition_level",
         "gender_eligibility",
+        "num_weeks",
+        "players_per_side",
+        "registration_deadline",
     ]
 
     for field in important_fields:

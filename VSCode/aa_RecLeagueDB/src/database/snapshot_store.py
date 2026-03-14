@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 import uuid
 
 from src.database.supabase_client import get_client
+from src.utils.domain_extractor import extract_base_domain
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +37,8 @@ def store_page_snapshot(
     """
     client = get_client()
 
-    # Extract domain from URL
-    parsed_url = urlparse(url)
-    domain = parsed_url.netloc
+    # Extract normalized base domain from URL
+    domain = extract_base_domain(url)
 
     # Prepare metadata
     if metadata is None:

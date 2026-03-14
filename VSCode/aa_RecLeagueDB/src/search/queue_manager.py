@@ -3,6 +3,7 @@
 import logging
 from src.database.supabase_client import get_client
 from src.search.url_validator import canonicalize_url
+from src.utils.domain_extractor import extract_base_domain
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,7 @@ def add_to_scrape_queue(
         # URL is new - add to queue
         queue_data = {
             'url': url_canonical,
+            'base_domain': extract_base_domain(url_canonical),
             'source_result_id': result_id,
             'organization_name': org_name,
             'sport_season_code': sport_season_code,

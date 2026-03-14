@@ -1,4 +1,4 @@
-"""4-way Haiku classifier: what kind of page is this?"""
+"""4-way page classifier: what kind of page is this?"""
 
 import logging
 import anthropic
@@ -56,7 +56,7 @@ def classify_page(yaml_content: str) -> str:
     try:
         client = anthropic.Anthropic()
         response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-sonnet-4-6",
             max_tokens=10,
             messages=[{"role": "user", "content": prompt}],
         )

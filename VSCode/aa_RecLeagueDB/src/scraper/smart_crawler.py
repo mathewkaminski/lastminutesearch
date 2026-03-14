@@ -40,6 +40,29 @@ def _strip_fragment(url: str) -> str:
     return url.split("#")[0]
 
 
+_SKIP_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".csv", ".zip", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".mp4", ".mp3"}
+
+
+def _is_fetchable(url: str) -> bool:
+    """Return False for non-HTML resources (PDFs, images, etc.) that Playwright can't scrape."""
+    path = urlparse(url).path.lower()
+    return not any(path.endswith(ext) for ext in _SKIP_EXTENSIONS)
+
+
+def _normalize_url(url: str) -> str:
+    """Canonical URL for deduplication: https, no www, no trailing slash, no fragment."""
+    url = url.split("#")[0]
+    try:
+        parsed = urlparse(url)
+        scheme = "https"
+        host = parsed.netloc.lstrip("www.")
+        path = parsed.path.rstrip("/") or "/"
+        query = ("?" + parsed.query) if parsed.query else ""
+        return f"{scheme}://{host}{path}{query}"
+    except Exception:
+        return url
+
+
 def _follow_index_links(
     index_url: str,
     index_yaml: str,
@@ -78,7 +101,9 @@ def _follow_index_links(
     candidates = []
     seen_candidates: set = set()
     for link in all_links:
-        normalized = _strip_fragment(link.url)
+        normalized = _normalize_url(link.url)
+        if not _is_fetchable(normalized):
+            continue
         if normalized in visited:
             continue
         if normalized in seen_candidates:
@@ -165,7 +190,7 @@ def crawl(
     # --- Layer 0: Start URL ---
     logger.info(f"Fetching start URL: {start_url}")
     home_yaml, home_meta = fetch_page_as_yaml(start_url, use_cache=use_cache, force_refresh=force_refresh)
-    visited.add(_strip_fragment(start_url))
+    visited.add(_normalize_url(start_url))
     home_full_text = home_meta.get("full_text", "") if home_meta else ""
 
     # Always collect start page — home pages carry fee/schedule data even when
@@ -187,7 +212,7 @@ def crawl(
         )
 
     # --- If start URL is a sub-page, also fetch the root ---
-    root_stripped = _strip_fragment(root_url)
+    root_stripped = _normalize_url(root_url)
     if root_stripped not in visited:
         visited.add(root_stripped)
         logger.info(f"Start URL is a sub-page — also fetching root: {root_url}")
@@ -221,10 +246,10 @@ def crawl(
     else:
         scored_home = []
 
-    seen: set = {_strip_fragment(start_url)}
+    seen: set = {_normalize_url(start_url)}
     primary_links = []
     for link in scored_home:
-        normalized = _strip_fragment(link.url)
+        normalized = _normalize_url(link.url)
         if normalized in seen:
             continue
         seen.add(normalized)
@@ -242,6 +267,8 @@ def crawl(
         if link.field_category and link.field_category in category_coverage:
             category_coverage[link.field_category].append(link.url)
 
+        if not _is_fetchable(link.url):
+            continue
         if link.url in visited:
             continue
         visited.add(link.url)  # link.url is already normalized from above
@@ -274,7 +301,7 @@ def crawl(
                 # e.g. GameSheet schedule pages that show "no matching games"
                 # due to a date filter but still carry division structure in the YAML.
                 logger.info(f"[Step A OTHER-scored] {link.url}")
-                league_pages.append((link.url, page_yaml))
+                collected_pages.append((link.url, page_yaml, full_text))
 
         except Exception as e:
             logger.warning(f"[Step A] Fetch failed {link.url}: {e}")

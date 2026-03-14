@@ -125,11 +125,12 @@ def test_crawl_returns_home_and_primary_when_both_have_leagues():
     assert len(pages) == 2
 
 
-def test_crawl_returns_only_home_when_all_pages_are_other():
-    """When home and all primary pages classify as OTHER, only the home page is returned.
+def test_crawl_collects_high_scoring_other_pages():
+    """High-scoring primary links classified as OTHER are still collected.
 
-    The crawler always collects the start URL (home pages carry fee/schedule data
-    even when classified OTHER). Non-home OTHER pages are skipped.
+    The crawler always collects the start URL, and also collects OTHER pages
+    whose link anchor scored >= 100 (e.g. "Register") since the link text
+    is a stronger signal than the classifier for borderline pages.
     """
     home_yaml = _make_yaml([("/register", "Register")])
 
@@ -142,9 +143,9 @@ def test_crawl_returns_only_home_when_all_pages_are_other():
         pages, _ = crawl("https://example.com/")
 
     urls = [url for url, _yaml, _ft in pages]
-    assert len(pages) == 1
+    assert len(pages) == 2
     assert "https://example.com/" in urls
-    assert "https://example.com/register" not in urls
+    assert "https://example.com/register" in urls
 
 
 # ---------------------------------------------------------------------------

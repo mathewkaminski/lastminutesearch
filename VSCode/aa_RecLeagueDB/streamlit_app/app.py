@@ -129,6 +129,6 @@ elif module_name == "org_view":
 
 st.divider()
 st.markdown(
-    '<div style="text-align: center; color: #666; font-size: 0.8rem;">RecSportsDB | 2026</div>',
+    '<div style="text-align: center; color: #666; font-size: 0.8rem;">RecSportsDB | 2026 | v1.3</div>',
     unsafe_allow_html=True
 )

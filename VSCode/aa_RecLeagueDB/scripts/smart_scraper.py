@@ -63,6 +63,7 @@ def run(url: str, dry_run: bool) -> dict:
     from src.scraper.smart_crawler import crawl
     from src.extractors.yaml_extractor import extract_league_data_from_yaml
     from src.database.writer import insert_league
+    from src.utils.league_id_generator import deduplicate_batch, league_display_name
 
     logger = logging.getLogger(__name__)
     result = {
@@ -76,51 +77,55 @@ def run(url: str, dry_run: bool) -> dict:
 
     # Phase 1+2: Navigate + classify
     logger.info(f"Starting smart crawl: {url}")
-    league_pages = crawl(url)
-    result["pages_with_leagues"] = len(league_pages)
+    crawled_pages, category_coverage = crawl(url)
+    result["pages_with_leagues"] = len(crawled_pages)
 
-    if not league_pages:
+    if not crawled_pages:
         result["errors"].append("No league pages found after full crawl")
         return result
 
-    # Phase 3: Extract + write
-    for page_url, yaml_content in league_pages:
+    # Phase 3: Extract from all pages
+    all_leagues = []
+    for page_url, yaml_content, full_text in crawled_pages:
         logger.info(f"Extracting leagues from: {page_url}")
         try:
-            leagues = extract_league_data_from_yaml(yaml_content, page_url)
-            result["leagues_extracted"] += len(leagues)
+            leagues = extract_league_data_from_yaml(
+                yaml_content, page_url, full_text=full_text,
+            )
+            all_leagues.extend(leagues)
         except Exception as e:
             msg = f"Extraction failed for {page_url}: {e}"
             logger.warning(msg)
             result["errors"].append(msg)
+
+    result["leagues_extracted"] = len(all_leagues)
+
+    # Batch dedup: merge duplicates across pages before DB insert
+    all_leagues = deduplicate_batch(all_leagues)
+
+    # Phase 4: Write to DB
+    for league in all_leagues:
+        pct = league.get("identifying_fields_pct", 0)
+        label = league_display_name(league)
+
+        if dry_run:
+            logger.info(f"  DRY-RUN ({pct:.0f}%): {label}")
+            result["leagues_written"] += 1
             continue
 
-        for league in leagues:
-            pct = league.get("identifying_fields_pct", 0)
-            label = (
-                f"{league.get('day_of_week')} | "
-                f"{(league.get('venue_name') or '')[:25]} | "
-                f"{league.get('gender_eligibility')}"
-            )
-
-            if dry_run:
-                logger.info(f"  DRY-RUN ({pct:.0f}%): {label}")
+        try:
+            league_id, is_new = insert_league(league)
+            if league_id is None:
+                logger.info(f"  SKIP ({pct:.0f}% < 50%): {label}")
+                result["skipped_low_quality"] += 1
+            else:
+                status = "NEW" if is_new else "MERGED"
+                logger.info(f"  [{status}] {league_id[:8]}... ({pct:.0f}%): {label}")
                 result["leagues_written"] += 1
-                continue
-
-            try:
-                league_id, is_new = insert_league(league)
-                if league_id is None:
-                    logger.info(f"  SKIP (writer rejected, low quality {pct:.0f}%): {label}")
-                    result["skipped_low_quality"] += 1
-                else:
-                    status = "NEW" if is_new else "MERGED"
-                    logger.info(f"  [{status}] {league_id[:8]}... ({pct:.0f}%): {label}")
-                    result["leagues_written"] += 1
-            except Exception as e:
-                msg = f"DB write failed for {label}: {e}"
-                logger.warning(msg)
-                result["errors"].append(msg)
+        except Exception as e:
+            msg = f"DB write failed for {label}: {e}"
+            logger.warning(msg)
+            result["errors"].append(msg)
 
     return result
 

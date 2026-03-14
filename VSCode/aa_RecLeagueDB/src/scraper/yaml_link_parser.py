@@ -188,6 +188,8 @@ def score_links(links: List[DiscoveredLink]) -> List[DiscoveredLink]:
         "programs",
         "results",
         "details",
+        "more info",
+        "more information",
     ]
     medium_priority_keywords = [
         "league",
@@ -204,6 +206,21 @@ def score_links(links: List[DiscoveredLink]) -> List[DiscoveredLink]:
         "calendar",
         "scores",
         "program",
+        "volleyball",
+        "basketball",
+        "soccer",
+        "softball",
+        "baseball",
+        "hockey",
+        "football",
+        "dodgeball",
+        "badminton",
+        "tennis",
+        "pickleball",
+        "ultimate",
+        "frisbee",
+        "lacrosse",
+        "rugby",
     ]
 
     for link in links:
@@ -286,7 +303,7 @@ _CATEGORY_KEYWORDS: dict[str, list[str]] = {
     "REGISTRATION": ["register", "signup", "sign up", "enroll", "payment", "fees", "pricing", "cost"],
     "POLICY": ["rules", "policies", "insurance", "waiver", "referee", "format"],
     "VENUE": ["venue", "location", "facility", "field", "gym", "arena", "court"],
-    "DETAIL": ["league", "division", "program", "season", "current", "calendar", "about", "sport", "join", "enroll", "upcoming"],
+    "DETAIL": ["league", "division", "program", "season", "current", "calendar", "about", "sport", "join", "enroll", "upcoming", "more info", "more information", "volleyball", "basketball", "soccer", "softball", "hockey", "football", "dodgeball"],
 }
 
 

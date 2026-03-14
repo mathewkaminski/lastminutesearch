@@ -14,7 +14,7 @@ def validate_required_fields(data: dict) -> Tuple[bool, List[str]]:
 
     Required fields:
     - organization_name
-    - sport_season_code
+    - sport_name (or sport_season_code as fallback)
     - url_scraped
 
     Args:
@@ -25,36 +25,38 @@ def validate_required_fields(data: dict) -> Tuple[bool, List[str]]:
         is_valid: True if all required fields present
         missing_fields: List of missing/empty field names
     """
-    required_fields = ["organization_name", "sport_season_code", "url_scraped"]
     missing = []
 
-    for field in required_fields:
+    for field in ("organization_name", "url_scraped"):
         value = data.get(field)
         if not value or (isinstance(value, str) and value.strip() == ""):
             missing.append(field)
+
+    # sport_name is primary; sport_season_code accepted as fallback
+    sport_name = data.get("sport_name")
+    sport_code = data.get("sport_season_code")
+    has_sport = bool(sport_name and str(sport_name).strip()) or bool(
+        sport_code and str(sport_code).strip()
+    )
+    if not has_sport:
+        missing.append("sport_name")
 
     is_valid = len(missing) == 0
     return is_valid, missing
 
 
 def calculate_quality_score(data: dict) -> int:
-    """Calculate data quality score (0-100) based on field coverage and validity.
+    """Calculate data quality score (0-100) based on three-tier field coverage.
 
     Scoring:
     - Start at 100
-    - -5 for each missing important field (dates, venue, fees)
-    - -10 for invalid values (negative fees, bad dates, wrong SSS code)
-    - -15 for suspicious data (num_teams=1, season_end < start)
-
-    Important fields (for MVP):
-    - season_start_date
-    - season_end_date
-    - day_of_week
-    - start_time
-    - venue_name
-    - team_fee OR individual_fee (at least one)
-    - competition_level
-    - gender_eligibility
+    - Required fields missing: -20 each (org_name, sport_season_code, url)
+    - Tier 1 (identifier) fields missing: -8 each
+    - Tier 2 (structured data) fields missing: -3 each
+    - Pricing missing (neither fee): -8
+    - Invalid values: -10 each
+    - Suspicious data: -15 each
+    - Staleness: -20 to -30
 
     Args:
         data: Extracted league data dictionary
@@ -76,26 +78,38 @@ def calculate_quality_score(data: dict) -> int:
         score -= 20
         penalties_log.append("missing_url_scraped")
 
-    # Check important fields (each missing = -5)
-    important_fields = [
+    # Tier 1: Identifier fields (missing = -8 each)
+    tier1_fields = [
         "season_start_date",
         "season_end_date",
         "day_of_week",
-        "start_time",
+        "num_weeks",
         "venue_name",
         "competition_level",
         "gender_eligibility",
-        "num_weeks",
+        "has_referee",
         "players_per_side",
-        "registration_deadline",
     ]
 
-    for field in important_fields:
+    for field in tier1_fields:
         if not data.get(field):
-            score -= 5
-            penalties_log.append(f"missing_{field}")
+            score -= 8
+            penalties_log.append(f"missing_t1_{field}")
 
-    # Check pricing (need at least one)
+    # Tier 2: Structured data fields (missing = -3 each)
+    tier2_fields = [
+        "start_time",
+        "time_played_per_week",
+        "registration_deadline",
+        "num_teams",
+    ]
+
+    for field in tier2_fields:
+        if not data.get(field):
+            score -= 3
+            penalties_log.append(f"missing_t2_{field}")
+
+    # Check pricing (need at least one) — important enough for -8
     if not data.get("team_fee") and not data.get("individual_fee"):
         score -= 8
         penalties_log.append("missing_team_fee_and_individual_fee")
@@ -159,6 +173,21 @@ def calculate_quality_score(data: dict) -> int:
         except (ValueError, TypeError):
             score -= 10
             penalties_log.append("invalid_date_format")
+
+    # Staleness penalty: de-prioritize old/ancient seasons
+    start_str = data.get("season_start_date") or data.get("season_end_date")
+    if start_str:
+        try:
+            season_date = datetime.strptime(str(start_str), "%Y-%m-%d").date()
+            age_days = (datetime.utcnow().date() - season_date).days
+            if age_days > 730:  # >2 years old
+                score -= 30
+                penalties_log.append("stale_season_over_2_years")
+            elif age_days > 365:  # >1 year old
+                score -= 20
+                penalties_log.append("stale_season_over_1_year")
+        except (ValueError, TypeError):
+            pass
 
     # Ensure score is within bounds
     score = max(0, min(100, score))

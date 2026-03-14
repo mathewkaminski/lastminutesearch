@@ -2,11 +2,12 @@
 
 import json
 import logging
+import re
 from typing import Optional, Dict, Any, List
 
 import anthropic
 
-from src.config.sss_codes import validate_sss_code
+from src.config.sss_codes import validate_sss_code, build_sss_code
 
 logger = logging.getLogger(__name__)
 
@@ -87,19 +88,46 @@ def extract_league_data_from_yaml(
         if "url_scraped" not in league or not league.get("url_scraped"):
             league["url_scraped"] = url
 
-        # Validate SSS code
-        sss_code = league.get("sport_season_code")
-        if sss_code:
-            if not validate_sss_code(sss_code):
-                logger.warning(f"Invalid SSS code: {sss_code}")
-                league["sport_season_code"] = None
+        # Derive SSS code from sport_name + season_name (primary path)
+        sport_name = league.get("sport_name")
+        season_name = league.get("season_name")
+        if sport_name and season_name:
+            # Normalize season: "Late Winter" -> "Winter", "Early Spring" -> "Spring"
+            season_normalized = season_name.strip()
+            for prefix in ("Late ", "Early ", "Mid ", "Mid-"):
+                if season_normalized.lower().startswith(prefix.lower()):
+                    season_normalized = season_normalized[len(prefix):]
+            derived_sss = build_sss_code(season_normalized, sport_name)
+            if derived_sss:
+                league["sport_season_code"] = derived_sss
+            elif not league.get("sport_season_code"):
+                logger.warning(
+                    f"Could not derive SSS from sport={sport_name}, "
+                    f"season={season_name}"
+                )
 
-        # Validate required fields
-        required_fields = ["organization_name", "sport_season_code", "url_scraped"]
+        # Validate SSS code if present (from LLM or derived)
+        sss_code = league.get("sport_season_code")
+        if sss_code and not validate_sss_code(sss_code):
+            logger.warning(f"Invalid SSS code: {sss_code}")
+            league["sport_season_code"] = None
+
+        # Validate required fields (sport_name replaces sport_season_code)
+        required_fields = ["organization_name", "sport_name", "url_scraped"]
         missing = [f for f in required_fields if not league.get(f)]
         if missing:
             logger.warning(f"Skipping league with missing fields {missing}")
             continue
+
+        # Validate players_per_side against URL NvN patterns
+        url_nvn = _extract_nvn_from_url(league.get("url_scraped", ""))
+        llm_pps = league.get("players_per_side")
+        if url_nvn and llm_pps and url_nvn != llm_pps:
+            logger.info(
+                f"Overriding players_per_side: LLM={llm_pps} → URL={url_nvn} "
+                f"(from {league.get('url_scraped', '')})"
+            )
+            league["players_per_side"] = url_nvn
 
         # Calculate completeness
         league["identifying_fields_pct"] = _calculate_identifying_completeness(league)
@@ -127,6 +155,42 @@ def extract_league_data_from_yaml(
     return processed_leagues
 
 
+def _extract_nvn_from_url(url: str) -> Optional[int]:
+    """Extract players_per_side from NvN patterns in URL.
+
+    Matches patterns like: 7v7, 7vs7, 7-v-7, 6v6, 5vs5, 4on4
+    Returns the number (e.g., 7) or None if no pattern found.
+    """
+    if not url:
+        return None
+    match = re.search(r'(\d+)\s*(?:v|vs|on|-v-)\s*(\d+)', url, re.IGNORECASE)
+    if match and match.group(1) == match.group(2):
+        return int(match.group(1))
+    return None
+
+
+_MAX_YAML_CHARS = 60000  # ~15-18K tokens; only trim truly huge pages (standings tables)
+_TRIM_HEAD = 30000
+_TRIM_MID = 20000
+_TRIM_TAIL = 10000
+
+
+def _trim_yaml(yaml_content: str) -> str:
+    """Sample head + middle + tail to stay within token budget.
+
+    Large pages (e.g. full standings tables) often have most league metadata
+    at the top.  We take a generous head, a mid-section, and a tail so we
+    don't miss registration details buried after the standings.
+    """
+    if len(yaml_content) <= _MAX_YAML_CHARS:
+        return yaml_content
+    head = yaml_content[:_TRIM_HEAD]
+    mid_start = (len(yaml_content) - _TRIM_MID) // 2
+    mid = yaml_content[mid_start: mid_start + _TRIM_MID]
+    tail = yaml_content[-_TRIM_TAIL:]
+    return head + "\n[...]\n" + mid + "\n[...]\n" + tail
+
+
 def _build_yaml_extraction_prompt(yaml_content: str, url: str, full_text: str = "") -> str:
     """Build extraction prompt for LLM with YAML structure guide.
 
@@ -141,17 +205,15 @@ def _build_yaml_extraction_prompt(yaml_content: str, url: str, full_text: str = 
     Returns:
         Formatted prompt string
     """
-    sss_ref = _build_sss_reference()
+    yaml_content = _trim_yaml(yaml_content)
 
-    schema_instructions = f"""SPORT/SEASON CODES (SSS Format - 3 digits: XYY):
-{sss_ref}
-
-OUTPUT SCHEMA (use exact field names, return null for missing fields):
+    schema_instructions = f"""OUTPUT SCHEMA (use exact field names, return null for missing fields):
 {{
   "leagues": [
     {{
       "organization_name": "string (required) - League organization name",
-      "sport_season_code": "string (required) - 3-digit SSS code (e.g., '201')",
+      "sport_name": "string (required) - Sport name exactly as described on the page (e.g., 'Soccer', 'Volleyball', 'Flag Football', 'Ball Hockey', 'Dodgeball', '3-Pitch Softball')",
+      "season_name": "string (required) - Season label exactly as described on the page (e.g., 'Late Winter', 'Winter', 'Spring', 'Summer', 'Fall'). Use the page's own wording.",
       "season_start_date": "string YYYY-MM-DD or null",
       "season_end_date": "string YYYY-MM-DD or null",
       "day_of_week": "string (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) or null",
@@ -162,7 +224,7 @@ OUTPUT SCHEMA (use exact field names, return null for missing fields):
       "venue_name": "string or null",
       "competition_level": "string (e.g., Recreational, Intermediate, Competitive) or null",
       "gender_eligibility": "string (Mens|Womens|CoEd|Other) or null",
-      "players_per_side": "integer (players per side on court/field, e.g. 4 for '4v4', 6 for '6v6') or null",
+      "players_per_side": "integer — parse from format strings like '7v7'→7, '6 v 6'→6, '5vs5'→5, '4 on 4'→4. Check headings, URLs, and league names FIRST. Do NOT guess from roster size or other indirect clues. null if no NvN pattern found.",
       "team_fee": "number (in dollars) or null",
       "individual_fee": "number (in dollars) or null",
       "registration_deadline": "string YYYY-MM-DD or null",
@@ -170,22 +232,30 @@ OUTPUT SCHEMA (use exact field names, return null for missing fields):
       "slots_left": "integer or null",
       "has_referee": "boolean or null",
       "requires_insurance": "boolean or null",
-      "insurance_policy_link": "string (URL to insurance or waiver policy page) or null"
+      "insurance_policy_link": "string (URL to insurance or waiver policy page) or null",
+      "team_capacity": "integer (max roster size per team) or null",
+      "tshirts_included": "boolean (whether league provides jerseys/pinnies/t-shirts) or null",
+      "end_time": "string HH:MM:SS (latest game end time, e.g. if games run 7-11pm use 23:00:00) or null"
     }}
   ]
 }}
 
 INSTRUCTIONS:
 - Extract ALL distinct leagues from this page
+- sport_name: Use the ACTUAL sport name from the page. "Ball Hockey" not "Ice Hockey". "3-Pitch Softball" not "Baseball". Read the page heading and content carefully.
+- season_name: Use the page's own season label. If the page says "Late Winter 2026 Leagues", use "Late Winter". If it says "Summer", use "Summer".
 - If a page lists multiple divisions/formats (e.g., 6v6 and 8v8), extract both as separate leagues
 - For dates, infer year from context (e.g., "June-August" = current/next year context)
 - For time, convert "7pm" → "19:00:00", "7:30pm" → "19:30:00". If multiple start times are listed (rotating schedule), use the EARLIEST one.
 - For time_played_per_week: look for patterns like "60 min", "1 hour", "90 minutes" in the league description or detail section.
 - For stat_holidays: look for "No games on", "No game", "except", or holiday callouts. Convert to [{{date, reason}}] array. If month/day listed without year, infer year from season context.
-- For players_per_side: extract from format strings like "6 v 6" → 6, "4 v 4" → 4, "5v5" → 5.
+- For players_per_side: extract ONLY from explicit NvN format strings ("7v7"→7, "6 v 6"→6, "5vs5"→5, "4 on 4"→4). Check the URL, page heading, and league name first — these are the most reliable sources. Do NOT infer from roster sizes, team lists, or other indirect information. Return null if no NvN pattern is found.
 - For prices, extract the team_fee (most common) from currency patterns like "$875" or "$ 875 + TAX"
 - For num_teams: grab from ANY source — explicit "X teams registered/enrolled", counting unique team names in a standings/schedule table, or any visible "N of X spots filled" language. Count ALL teams across all divisions for a given day/venue/gender combo. Do NOT infer or fabricate.
 - For insurance_policy_link: extract any URL linked from insurance/waiver text (e.g., "policy at https://...", "insurance form here")
+- For team_capacity: look for "max roster", "roster limit", "up to N players per team", "max N per roster". Return the integer limit or null.
+- For tshirts_included: look for "jerseys provided", "t-shirts included", "pinnies provided", "shirts included". Return true/false or null if not mentioned.
+- For end_time: if a time window is given (e.g., "games 7-11pm", "7:00 PM - 10:30 PM"), extract the END time. Convert to HH:MM:SS format. If only a start time is given, return null for end_time.
 - Use null for any missing field
 - Return ONLY the JSON object with "leagues" array, no other text"""
 
@@ -263,9 +333,10 @@ EXAMPLE YAML PATTERN (League Registration Table):
 
 From this, extract:
 - organization_name: "Ottawa Volley Sixes" (from page context)
+- sport_name: "Volleyball" (from the gridcell text)
+- season_name: "Winter" (from page context / heading)
 - day_of_week: "Monday"
 - season_start_date: "2026-01-04" (infer year if missing)
-- sport_season_code: "411" (4=Winter, 11=Volleyball)
 - gender_eligibility: "CoEd"
 - num_weeks: 12
 - time_played_per_week: 60 (minutes)
@@ -358,12 +429,25 @@ def _call_claude(prompt: str, model: str = "claude-sonnet-4-6", max_retries: int
                 start = response_text.find("{")
                 end = response_text.rfind("}") + 1
                 if start >= 0 and end > start:
-                    return json.loads(response_text[start:end])
+                    candidate = response_text[start:end]
+                    try:
+                        return json.loads(candidate)
+                    except json.JSONDecodeError:
+                        # Response is truncated mid-object (output token limit hit).
+                        # Salvage complete league objects by trimming at last valid '},'
+                        # boundary and closing the array/wrapper.
+                        last_complete = candidate.rfind("},")
+                        if last_complete > 0:
+                            salvaged = candidate[: last_complete + 1] + "\n  ]\n}"
+                            try:
+                                return json.loads(salvaged)
+                            except json.JSONDecodeError:
+                                pass
                 raise ValueError(f"Could not parse JSON from response: {response_text[:200]}")
 
         except RateLimitError:
             if attempt < max_retries:
-                wait_time = 2 ** attempt
+                wait_time = 65  # wait for the per-minute window to reset
                 logger.warning(f"Rate limited, waiting {wait_time}s before retry")
                 time.sleep(wait_time)
             else:
@@ -380,44 +464,38 @@ def _call_claude(prompt: str, model: str = "claude-sonnet-4-6", max_retries: int
 
 
 def _calculate_identifying_completeness(league: Dict[str, Any]) -> float:
-    """Calculate completeness based on 8 identifying fields.
+    """Calculate completeness based on Tier 1 identifier fields.
 
-    Identifying fields (from database schema):
-    1. sport_season_code
-    2. season_year (derived from season_start_date)
-    3. venue_name
-    4. day_of_week
-    5. start_time
+    Tier 1 fields (excluding required org_name/sport_name/season_name):
+    1. season_start_date (also derives season_year)
+    2. season_end_date
+    3. day_of_week
+    4. num_weeks
+    5. venue_name
     6. competition_level
     7. gender_eligibility
-    8. num_weeks
+    8. has_referee
+    9. players_per_side
 
     Args:
         league: League dict
 
     Returns:
-        Percentage (0-100) of identifying fields present
+        Percentage (0-100) of Tier 1 identifier fields present
     """
     identifying_fields = [
-        "sport_season_code",
-        "season_start_date",  # Use for year derivation
-        "venue_name",
+        "season_start_date",
+        "season_end_date",
         "day_of_week",
-        "start_time",
+        "num_weeks",
+        "venue_name",
         "competition_level",
         "gender_eligibility",
-        "num_weeks",
+        "has_referee",
+        "players_per_side",
     ]
 
-    filled = 0
-    for field in identifying_fields:
-        if league.get(field) is not None:
-            # For season_start_date, check if it can derive year
-            if field == "season_start_date" and league.get("season_start_date"):
-                filled += 1
-            elif field != "season_start_date" and league.get(field):
-                filled += 1
-
+    filled = sum(1 for f in identifying_fields if league.get(f) is not None and league.get(f) != "")
     return (filled / len(identifying_fields)) * 100
 
 

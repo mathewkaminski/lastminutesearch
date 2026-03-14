@@ -6,6 +6,8 @@ COPY requirements-streamlit.txt .
 RUN pip install --no-cache-dir -r requirements-streamlit.txt
 RUN playwright install chromium --with-deps
 
+COPY . .
+
 EXPOSE 8501
 
 CMD ["streamlit", "run", "streamlit_app/app.py", \

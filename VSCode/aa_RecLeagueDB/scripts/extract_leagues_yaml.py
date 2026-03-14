@@ -39,6 +39,7 @@ from src.extractors.yaml_extractor import extract_league_data_from_yaml
 from src.database.snapshot_store import store_page_snapshot, update_snapshot_status, store_gap_report
 from src.database.writer import insert_league
 from src.extractors.gap_reporter import compute_field_coverage
+from src.utils.league_id_generator import deduplicate_batch, league_display_name
 
 logging.basicConfig(
     level=logging.INFO,
@@ -139,12 +140,14 @@ def extract_leagues_from_url(
                 logger.warning(error_msg)
                 result["errors"].append(error_msg)
 
-        result["total_leagues"] = len(all_leagues)
-
         if not all_leagues:
             raise ValueError("No leagues extracted from any page")
 
-        logger.info(f"\nTotal: {len(all_leagues)} league(s) from {len(page_data)} page(s)")
+        logger.info(f"\nTotal: {len(all_leagues)} raw league(s) from {len(page_data)} page(s)")
+
+        # Batch dedup: merge duplicate leagues across pages before DB insert
+        all_leagues = deduplicate_batch(all_leagues)
+        result["total_leagues"] = len(all_leagues)
 
         # Step 2.5: Insert leagues into leagues_metadata table
         if not dry_run:
@@ -154,19 +157,20 @@ def extract_leagues_from_url(
 
             leagues_stored = 0
             for league in all_leagues:
+                display = league_display_name(league)
                 try:
                     league_id, is_new = insert_league(league, metadata={"url": url})
                     leagues_stored += 1
                     status = "NEW" if is_new else "UPDATED"
-                    logger.info(f"  [{status}] {league.get('organization_name')}: {league_id}")
+                    logger.info(f"  [{status}] {display}: {league_id}")
 
                 except ValueError as e:
-                    error_msg = f"Validation error for {league.get('organization_name')}: {e}"
+                    error_msg = f"Validation error for {display}: {e}"
                     logger.warning(error_msg)
                     result["errors"].append(error_msg)
 
                 except Exception as e:
-                    error_msg = f"Failed to insert {league.get('organization_name')}: {e}"
+                    error_msg = f"Failed to insert {display}: {e}"
                     logger.error(error_msg)
                     result["errors"].append(error_msg)
 
@@ -174,7 +178,9 @@ def extract_leagues_from_url(
             logger.info(f"Stored {leagues_stored}/{len(all_leagues)} leagues to leagues_metadata")
         else:
             result["leagues_stored"] = len(all_leagues)
-            logger.info(f"Would store {len(all_leagues)} leagues (dry run)")
+            logger.info(f"Would store {len(all_leagues)} unique leagues (dry run)")
+            for league in all_leagues:
+                logger.info(f"  {league_display_name(league)}")
 
         # Step 3: Store to database (unless dry run)
         if not dry_run:

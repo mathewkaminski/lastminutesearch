@@ -32,6 +32,8 @@ Registration deadline: December 15, 2025
 _STUB_LEAGUE_JSON = """{
   "leagues": [{
     "organization_name": "Test Org",
+    "sport_name": "Soccer",
+    "season_name": "Spring",
     "sport_season_code": "111",
     "season_start_date": null,
     "season_end_date": null,

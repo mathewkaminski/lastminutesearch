@@ -305,7 +305,7 @@ def _prepare_for_insert(data: Dict[str, Any], metadata: Optional[Dict[str, Any]]
                 prepared["time_played_per_week"] = None
 
     # Handle numeric fields - convert strings to numbers if needed
-    for field in ["team_fee", "individual_fee", "num_teams", "slots_left", "num_weeks", "players_per_side"]:
+    for field in ["team_fee", "individual_fee", "num_teams", "slots_left", "num_weeks", "players_per_side", "team_capacity"]:
         if field in prepared and prepared[field] is not None:
             try:
                 if field in ["team_fee", "individual_fee"]:
@@ -317,7 +317,7 @@ def _prepare_for_insert(data: Dict[str, Any], metadata: Optional[Dict[str, Any]]
                 prepared[field] = None
 
     # Handle boolean fields
-    for field in ["has_referee", "requires_insurance"]:
+    for field in ["has_referee", "requires_insurance", "tshirts_included"]:
         if field in prepared and prepared[field] is not None:
             if isinstance(prepared[field], str):
                 prepared[field] = prepared[field].lower() in ["true", "yes", "1"]
@@ -329,6 +329,8 @@ def _prepare_for_insert(data: Dict[str, Any], metadata: Optional[Dict[str, Any]]
         "url_id",
         "organization_name",
         "url_scraped",
+        "sport_name",
+        "season_name",
         "sport_season_code",
         "season_year",
         "season_start_date",
@@ -350,6 +352,9 @@ def _prepare_for_insert(data: Dict[str, Any], metadata: Optional[Dict[str, Any]]
         "requires_insurance",
         "insurance_policy_link",
         "players_per_side",
+        "team_capacity",
+        "tshirts_included",
+        "end_time",
         "quality_score",
         "manual_review_flag",
         "pages_scraped",

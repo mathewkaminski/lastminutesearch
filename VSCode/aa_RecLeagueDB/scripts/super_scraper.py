@@ -114,11 +114,16 @@ def run(url: str, dry_run: bool = False) -> dict:
     logger.info(f"Super scrape {url} — {len(existing_leagues)} existing records")
 
     # --- Pass 1: Deep YAML crawl ---
-    league_pages = deep_crawl(url)
+    crawl_result = deep_crawl(url)
+    # deep_crawl returns (pages, coverage, parent_map) or empty list on failure
+    if isinstance(crawl_result, tuple):
+        league_pages = crawl_result[0]
+    else:
+        league_pages = crawl_result
     result["pages_crawled"] = len(league_pages)
 
     all_extracted: list[dict] = []
-    for page_url, yaml_content in league_pages:
+    for page_url, yaml_content, *_rest in league_pages:
         try:
             leagues = extract_league_data_from_yaml(yaml_content, page_url)
             all_extracted.extend(leagues)

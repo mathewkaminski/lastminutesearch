@@ -16,7 +16,8 @@ from src.utils.listing_classifier import classify_listing_type
 
 logger = logging.getLogger(__name__)
 
-MIN_INSERT_IDENTIFYING_PCT = 50  # New records below this threshold are not inserted
+MIN_INSERT_IDENTIFYING_PCT = 50   # standalone leagues
+MIN_CHILD_IDENTIFYING_PCT = 25    # true children (parent link + sport match)
 
 
 def _merge_league_records(existing_data: dict, new_data: dict) -> dict:
@@ -67,7 +68,7 @@ def _merge_league_records(existing_data: dict, new_data: dict) -> dict:
     return merged
 
 
-def insert_league(data: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None, supabase_client=None) -> Tuple[str, bool]:
+def insert_league(data: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None, supabase_client=None, is_true_child: bool = False) -> Tuple[str, bool]:
     """Insert league into database with deduplication and quality checks.
 
     Process:
@@ -144,9 +145,11 @@ def insert_league(data: Dict[str, Any], metadata: Optional[Dict[str, Any]] = Non
 
     # Quality gate for new inserts only (not for merges — those always proceed)
     new_pct = prepared_data.get("identifying_fields_pct") or 0
-    if new_pct < MIN_INSERT_IDENTIFYING_PCT:
+    threshold = MIN_CHILD_IDENTIFYING_PCT if is_true_child else MIN_INSERT_IDENTIFYING_PCT
+    if new_pct < threshold:
         logger.info(
-            f"Skipping low-quality new league ({new_pct:.0f}% < {MIN_INSERT_IDENTIFYING_PCT}%): "
+            f"Skipping low-quality new league ({new_pct:.0f}% < {threshold}%"
+            f"{', child' if is_true_child else ''}): "
             f"{prepared_data.get('organization_name')}"
         )
         return None, False

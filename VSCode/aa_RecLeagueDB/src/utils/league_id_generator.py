@@ -132,11 +132,21 @@ def build_uniqueness_key(data: dict) -> dict:
         "day_of_week": normalize_for_comparison(data.get("day_of_week")),
         "competition_level": normalize_for_comparison(data.get("competition_level")),
         "gender_eligibility": normalize_for_comparison(data.get("gender_eligibility")),
-        "num_weeks": data.get("num_weeks"),
-        "players_per_side": data.get("players_per_side"),
+        "num_weeks": _to_int(data.get("num_weeks")),
+        "players_per_side": _to_int(data.get("players_per_side")),
     }
 
     return key
+
+
+def _to_int(val) -> Optional[int]:
+    """Coerce a value to int for identity comparison, or None."""
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return None
 
 
 def _is_empty(val) -> bool:
@@ -220,7 +230,44 @@ def league_display_name(data: dict) -> str:
     return " | ".join(parts)
 
 
-def deduplicate_batch(leagues: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+MIN_PARENT_CHILD_OVERLAP = 1
+
+
+def _is_parent_child_pair(
+    league_a: dict, league_b: dict, parent_map: dict
+) -> bool:
+    """True if one league's source_url is a child of the other's."""
+    url_a = league_a.get("source_url", league_a.get("url_scraped", ""))
+    url_b = league_b.get("source_url", league_b.get("url_scraped", ""))
+    return (url_a in parent_map and parent_map[url_a] == url_b) or \
+           (url_b in parent_map and parent_map[url_b] == url_a)
+
+
+def keys_match_relaxed(key_a: dict, key_b: dict, min_overlap: int = 1) -> bool:
+    """Like keys_match but with a configurable overlap threshold."""
+    overlap_count = 0
+    for field in key_a:
+        val_a = key_a[field]
+        val_b = key_b.get(field)
+        if _is_empty(val_a) or _is_empty(val_b):
+            continue
+        if val_a != val_b:
+            return False
+        overlap_count += 1
+    return overlap_count >= min_overlap
+
+
+IDENTIFYING_FIELDS = [
+    "organization_name", "sport_name", "season_year", "venue_name",
+    "day_of_week", "competition_level", "gender_eligibility",
+    "num_weeks", "players_per_side",
+]
+
+
+def deduplicate_batch(
+    leagues: List[Dict[str, Any]],
+    parent_map: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
     """Merge duplicate leagues within a single extraction batch.
 
     Leagues from different pages (home, registration, detail) that
@@ -247,6 +294,17 @@ def deduplicate_batch(leagues: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             if keys_match(key, gk):
                 matched_idx = i
                 break
+
+        # Parent-child fallback: relaxed overlap when sport_name matches
+        if matched_idx is None and parent_map:
+            for i, gk in enumerate(group_keys):
+                if _is_parent_child_pair(league, groups[i][0], parent_map):
+                    sport_a = normalize_for_comparison(league.get("sport_name"))
+                    sport_b = normalize_for_comparison(groups[i][0].get("sport_name"))
+                    if sport_a and sport_b and sport_a == sport_b:
+                        if keys_match_relaxed(key, gk, MIN_PARENT_CHILD_OVERLAP):
+                            matched_idx = i
+                            break
 
         if matched_idx is not None:
             groups[matched_idx].append(league)
@@ -293,6 +351,10 @@ def _merge_group(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         for field, value in supplement.items():
             if merged.get(field) is None and value is not None:
                 merged[field] = value
+
+    # Recalculate identifying_fields_pct after merge
+    filled = sum(1 for f in IDENTIFYING_FIELDS if not _is_empty(merged.get(f)))
+    merged["identifying_fields_pct"] = round(100 * filled / len(IDENTIFYING_FIELDS), 1)
 
     return merged
 

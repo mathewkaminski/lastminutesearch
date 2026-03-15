@@ -30,7 +30,7 @@ def test_run_sends_low_quality_leagues_to_writer():
 
     with (
         patch.object(src.scraper.smart_crawler, "crawl",
-                     return_value=([("https://test.com", "yaml", "")], {})),
+                     return_value=([("https://test.com", "yaml", "")], {}, {})),
         patch.object(src.extractors.yaml_extractor, "extract_league_data_from_yaml",
                      return_value=[low_quality]),
         patch.object(src.database.writer, "insert_league",

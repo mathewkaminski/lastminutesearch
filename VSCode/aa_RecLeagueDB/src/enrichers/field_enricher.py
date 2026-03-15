@@ -254,7 +254,7 @@ JSON Output:"""
         prompt = self._build_prompt(content, null_fields, leagues)
         try:
             message = self._anthropic.messages.create(
-                model="claude-sonnet-4-6",
+                model="claude-haiku-4-5-20251001",
                 max_tokens=2048,
                 temperature=0,
                 messages=[{"role": "user", "content": prompt}],

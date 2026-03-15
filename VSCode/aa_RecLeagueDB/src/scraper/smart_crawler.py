@@ -73,6 +73,7 @@ def _follow_index_links(
     current_depth: int,
     use_cache: bool = True,
     force_refresh: bool = False,
+    parent_map: dict = None,
 ) -> None:
     """Fetch and classify internal links found on a LEAGUE_INDEX page.
 
@@ -126,11 +127,15 @@ def _follow_index_links(
             if page_type in ("LEAGUE_DETAIL", "SCHEDULE"):
                 logger.info(f"[Index->{page_type}] {link.url}")
                 league_pages.append((link.url, page_yaml, full_text))
+                if parent_map is not None:
+                    parent_map[link.url] = index_url
 
             elif page_type == "LEAGUE_INDEX":
                 logger.info(f"[Index->INDEX depth={current_depth}] {link.url}")
                 # Also collect the index page itself (partial data better than nothing)
                 league_pages.append((link.url, page_yaml, full_text))
+                if parent_map is not None:
+                    parent_map[link.url] = index_url
                 if current_depth < max_index_depth:
                     _follow_index_links(
                         index_url=link.url,
@@ -142,6 +147,7 @@ def _follow_index_links(
                         current_depth=current_depth + 1,
                         use_cache=use_cache,
                         force_refresh=force_refresh,
+                        parent_map=parent_map,
                     )
             # OTHER: skip
 
@@ -155,7 +161,7 @@ def crawl(
     primary_link_min_score: int = 100,
     use_cache: bool = True,
     force_refresh: bool = False,
-) -> tuple[list[tuple[str, str, str]], dict[str, list[str]]]:
+) -> tuple[list[tuple[str, str, str]], dict[str, list[str]], dict[str, str]]:
     """Crawl a sports league website, return pages confirmed to have league data.
 
     Args:
@@ -170,12 +176,14 @@ def crawl(
           - List of (url, yaml_content, full_text) for pages classified as
             LEAGUE_DETAIL, SCHEDULE, or LEAGUE_INDEX.
           - Dict mapping field category → list of URLs seen for that category.
+          - Dict mapping detail_url → parent index_url (parent_map).
     """
     if not use_cache:
         force_refresh = True
 
     visited: set = set()
     collected_pages: list = []
+    parent_map: dict[str, str] = {}
     category_coverage: dict[str, list[str]] = {
         "SCHEDULE": [],
         "REGISTRATION": [],
@@ -209,6 +217,7 @@ def crawl(
             current_depth=1,
             use_cache=use_cache,
             force_refresh=force_refresh,
+            parent_map=parent_map,
         )
 
     # --- If start URL is a sub-page, also fetch the root ---
@@ -232,6 +241,7 @@ def crawl(
                 current_depth=1,
                 use_cache=use_cache,
                 force_refresh=force_refresh,
+                parent_map=parent_map,
             )
 
     # --- Parse home navigation links ---
@@ -294,6 +304,7 @@ def crawl(
                     current_depth=1,
                     use_cache=use_cache,
                     force_refresh=force_refresh,
+                    parent_map=parent_map,
                 )
 
             else:
@@ -340,4 +351,4 @@ def crawl(
     if not collected_pages:
         logger.warning(f"No league pages found for {start_url}")
 
-    return collected_pages, category_coverage
+    return collected_pages, category_coverage, parent_map

@@ -39,7 +39,7 @@ from src.extractors.yaml_extractor import extract_league_data_from_yaml
 from src.database.snapshot_store import store_page_snapshot, update_snapshot_status, store_gap_report
 from src.database.writer import insert_league
 from src.extractors.gap_reporter import compute_field_coverage
-from src.utils.league_id_generator import deduplicate_batch, league_display_name
+from src.utils.league_id_generator import deduplicate_batch, league_display_name, normalize_for_comparison
 
 logging.basicConfig(
     level=logging.INFO,
@@ -95,7 +95,7 @@ def extract_leagues_from_url(
         logger.info("STEP 1: Crawling URL with smart_crawler")
         logger.info("="*80)
 
-        crawled_pages, category_coverage = smart_crawl(
+        crawled_pages, category_coverage, parent_map = smart_crawl(
             url,
             use_cache=use_cache,
             force_refresh=not use_cache,
@@ -146,7 +146,7 @@ def extract_leagues_from_url(
         logger.info(f"\nTotal: {len(all_leagues)} raw league(s) from {len(page_data)} page(s)")
 
         # Batch dedup: merge duplicate leagues across pages before DB insert
-        all_leagues = deduplicate_batch(all_leagues)
+        all_leagues = deduplicate_batch(all_leagues, parent_map=parent_map)
         result["total_leagues"] = len(all_leagues)
 
         # Step 2.5: Insert leagues into leagues_metadata table
@@ -159,7 +159,23 @@ def extract_leagues_from_url(
             for league in all_leagues:
                 display = league_display_name(league)
                 try:
-                    league_id, is_new = insert_league(league, metadata={"url": url})
+                    # Determine if this league is a true child (parent link + sport match)
+                    source_url = league.get("source_url", league.get("url_scraped", ""))
+                    is_true_child = False
+                    if source_url in parent_map:
+                        parent_url = parent_map[source_url]
+                        parent_leagues = [
+                            l for l in all_leagues
+                            if l.get("source_url", l.get("url_scraped", "")) == parent_url
+                        ]
+                        child_sport = normalize_for_comparison(league.get("sport_name"))
+                        if child_sport and any(
+                            normalize_for_comparison(pl.get("sport_name")) == child_sport
+                            for pl in parent_leagues
+                        ):
+                            is_true_child = True
+
+                    league_id, is_new = insert_league(league, metadata={"url": url}, is_true_child=is_true_child)
                     leagues_stored += 1
                     status = "NEW" if is_new else "UPDATED"
                     logger.info(f"  [{status}] {display}: {league_id}")

@@ -36,7 +36,7 @@ def test_crawl_returns_home_page_when_home_has_leagues():
         mock_classify.return_value = "LEAGUE_DETAIL"
 
         from src.scraper.smart_crawler import crawl
-        pages, _ = crawl("https://example.com/")
+        pages, _, _ = crawl("https://example.com/")
 
     assert len(pages) == 1
     assert pages[0][0] == "https://example.com/"
@@ -117,7 +117,7 @@ def test_crawl_returns_home_and_primary_when_both_have_leagues():
         patch("src.scraper.smart_crawler.classify_page", side_effect=fake_classify),
     ):
         from src.scraper.smart_crawler import crawl
-        pages, _ = crawl("https://example.com/")
+        pages, _, _ = crawl("https://example.com/")
 
     urls = [url for url, _yaml, _ft in pages]
     assert "https://example.com/" in urls
@@ -140,7 +140,7 @@ def test_crawl_collects_high_scoring_other_pages():
         patch("src.scraper.smart_crawler.classify_page", return_value="OTHER"),
     ):
         from src.scraper.smart_crawler import crawl
-        pages, _ = crawl("https://example.com/")
+        pages, _, _ = crawl("https://example.com/")
 
     urls = [url for url, _yaml, _ft in pages]
     assert len(pages) == 2
@@ -180,7 +180,7 @@ def test_crawl_follows_detail_links_from_league_index():
         patch("src.scraper.smart_crawler.classify_page", side_effect=fake_classify),
     ):
         from src.scraper.smart_crawler import crawl
-        pages, _ = crawl("https://example.com")
+        pages, _, _ = crawl("https://example.com")
 
     urls = [url for url, _yaml, _ft in pages]
     assert "https://example.com/detail-a" in urls
@@ -253,7 +253,7 @@ def test_crawl_skips_other_primary_pages():
         patch("src.scraper.smart_crawler.classify_page", side_effect=fake_classify),
     ):
         from src.scraper.smart_crawler import crawl
-        pages, _ = crawl("https://example.com")
+        pages, _, _ = crawl("https://example.com")
 
     urls = [url for url, _yaml, _ft in pages]
     assert "https://example.com/about" not in urls
@@ -309,8 +309,8 @@ class TestLinkCapAndCategoryCoverage:
             result = crawl("https://example.com")
 
         assert isinstance(result, tuple)
-        assert len(result) == 2
-        pages, coverage = result
+        assert len(result) == 3
+        pages, coverage, parent_map = result
         assert isinstance(pages, list)
         assert len(pages[0]) == 3  # (url, yaml, full_text) triples
         assert isinstance(coverage, dict)
@@ -333,7 +333,7 @@ class TestLinkCapAndCategoryCoverage:
             mock_classify.return_value = "LEAGUE_DETAIL"
 
             from src.scraper.smart_crawler import crawl
-            _pages, coverage = crawl("https://example.com")
+            _pages, coverage, _ = crawl("https://example.com")
 
         assert "https://example.com/schedule" in coverage["SCHEDULE"]
         assert "https://example.com/register" in coverage["REGISTRATION"]
@@ -367,7 +367,7 @@ class TestAdaptiveDepth:
             mock_classify.return_value = "LEAGUE_DETAIL"
 
             from src.scraper.smart_crawler import crawl
-            pages, coverage = crawl(
+            pages, coverage, _ = crawl(
                 "https://example.com/",
                 primary_link_min_score=200,  # force /register to be skipped in normal pass
             )

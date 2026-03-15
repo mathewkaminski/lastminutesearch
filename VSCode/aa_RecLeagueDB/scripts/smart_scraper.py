@@ -9,6 +9,7 @@ Usage:
     python scripts/smart_scraper.py --url https://... --log-level DEBUG
 """
 import argparse
+import csv
 import logging
 import os
 import sys
@@ -25,6 +26,19 @@ if env_file.exists():
             os.environ.setdefault(key.strip(), value.strip())
 
 LOG_DIR = Path(__file__).parent.parent / "logs"
+
+CSV_COLUMNS = [
+    "organization_name", "url_scraped", "sport_name", "season_name",
+    "sport_season_code", "season_year", "season_start_date", "season_end_date",
+    "day_of_week", "start_time", "end_time", "num_weeks", "time_played_per_week",
+    "stat_holidays", "venue_name", "competition_level", "gender_eligibility",
+    "team_fee", "individual_fee", "registration_deadline",
+    "num_teams", "slots_left", "has_referee", "requires_insurance",
+    "insurance_policy_link", "players_per_side", "team_capacity",
+    "tshirts_included", "quality_score", "identifying_fields_pct",
+    "page_has_multi_leagues", "base_domain", "listing_type",
+    "source_url", "is_true_child",
+]
 
 
 def parse_args(argv=None) -> argparse.Namespace:
@@ -63,7 +77,7 @@ def run(url: str, dry_run: bool) -> dict:
     from src.scraper.smart_crawler import crawl
     from src.extractors.yaml_extractor import extract_league_data_from_yaml
     from src.database.writer import insert_league
-    from src.utils.league_id_generator import deduplicate_batch, league_display_name
+    from src.utils.league_id_generator import deduplicate_batch, league_display_name, normalize_for_comparison
 
     logger = logging.getLogger(__name__)
     result = {
@@ -77,7 +91,7 @@ def run(url: str, dry_run: bool) -> dict:
 
     # Phase 1+2: Navigate + classify
     logger.info(f"Starting smart crawl: {url}")
-    crawled_pages, category_coverage = crawl(url)
+    crawled_pages, category_coverage, parent_map = crawl(url)
     result["pages_with_leagues"] = len(crawled_pages)
 
     if not crawled_pages:
@@ -101,22 +115,46 @@ def run(url: str, dry_run: bool) -> dict:
     result["leagues_extracted"] = len(all_leagues)
 
     # Batch dedup: merge duplicates across pages before DB insert
-    all_leagues = deduplicate_batch(all_leagues)
+    all_leagues = deduplicate_batch(all_leagues, parent_map=parent_map)
 
     # Phase 4: Write to DB
     for league in all_leagues:
         pct = league.get("identifying_fields_pct", 0)
         label = league_display_name(league)
 
+        # Compute is_true_child for both dry-run and live paths
+        source_url = league.get("source_url", league.get("url_scraped", ""))
+        is_true_child = False
+        if source_url in parent_map:
+            parent_url = parent_map[source_url]
+            parent_leagues = [
+                l for l in all_leagues
+                if l.get("source_url", l.get("url_scraped", "")) == parent_url
+            ]
+            child_sport = normalize_for_comparison(league.get("sport_name"))
+            if child_sport and any(
+                normalize_for_comparison(pl.get("sport_name")) == child_sport
+                for pl in parent_leagues
+            ):
+                is_true_child = True
+
+        league["is_true_child"] = is_true_child
+
         if dry_run:
-            logger.info(f"  DRY-RUN ({pct:.0f}%): {label}")
-            result["leagues_written"] += 1
+            threshold = 25 if is_true_child else 50
+            if pct < threshold:
+                logger.info(f"  DRY-RUN SKIP ({pct:.0f}% < {threshold}%): {label}")
+                result["skipped_low_quality"] += 1
+            else:
+                logger.info(f"  DRY-RUN ({pct:.0f}%{'*' if is_true_child else ''}): {label}")
+                result["leagues_written"] += 1
             continue
 
         try:
-            league_id, is_new = insert_league(league)
+            league_id, is_new = insert_league(league, is_true_child=is_true_child)
             if league_id is None:
-                logger.info(f"  SKIP ({pct:.0f}% < 50%): {label}")
+                threshold = 25 if is_true_child else 50
+                logger.info(f"  SKIP ({pct:.0f}% < {threshold}%): {label}")
                 result["skipped_low_quality"] += 1
             else:
                 status = "NEW" if is_new else "MERGED"
@@ -126,6 +164,22 @@ def run(url: str, dry_run: bool) -> dict:
             msg = f"DB write failed for {label}: {e}"
             logger.warning(msg)
             result["errors"].append(msg)
+
+    if dry_run and all_leagues:
+        from urllib.parse import urlparse
+        # Only include rows that would pass the quality gate
+        csv_leagues = [
+            l for l in all_leagues
+            if l.get("identifying_fields_pct", 0) >= (25 if l.get("is_true_child") else 50)
+        ]
+        domain = urlparse(url).netloc.replace("www.", "")
+        csv_path = Path(__file__).parent.parent / f"dry_run_{domain}.csv"
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(csv_leagues)
+        logger.info(f"Dry-run CSV written: {csv_path} ({len(csv_leagues)} rows)")
+        result["csv_path"] = str(csv_path)
 
     return result
 

@@ -464,39 +464,39 @@ def _call_claude(prompt: str, model: str = "claude-sonnet-4-6", max_retries: int
 
 
 def _calculate_identifying_completeness(league: Dict[str, Any]) -> float:
-    """Calculate completeness based on Tier 1 identifier fields.
+    """Calculate completeness based on the 9-field identity key.
 
-    Tier 1 fields (excluding required org_name/sport_name/season_name):
-    1. season_start_date (also derives season_year)
-    2. season_end_date
-    3. day_of_week
-    4. num_weeks
-    5. venue_name
+    Uses the same IDENTIFYING_FIELDS as league_id_generator to keep the
+    quality gate aligned with the dedup identity model:
+    1. organization_name
+    2. sport_name
+    3. season_year (derived from season_start_date / season_end_date)
+    4. venue_name
+    5. day_of_week
     6. competition_level
     7. gender_eligibility
-    8. has_referee
+    8. num_weeks
     9. players_per_side
 
     Args:
         league: League dict
 
     Returns:
-        Percentage (0-100) of Tier 1 identifier fields present
+        Percentage (0-100) of identity fields present
     """
-    identifying_fields = [
-        "season_start_date",
-        "season_end_date",
-        "day_of_week",
-        "num_weeks",
-        "venue_name",
-        "competition_level",
-        "gender_eligibility",
-        "has_referee",
-        "players_per_side",
-    ]
+    from src.utils.league_id_generator import IDENTIFYING_FIELDS, extract_season_year
 
-    filled = sum(1 for f in identifying_fields if league.get(f) is not None and league.get(f) != "")
-    return (filled / len(identifying_fields)) * 100
+    # Derive season_year from dates so it counts toward completeness
+    if not league.get("season_year"):
+        sy = extract_season_year(league)
+        if sy:
+            league["season_year"] = sy
+
+    filled = sum(
+        1 for f in IDENTIFYING_FIELDS
+        if league.get(f) is not None and league.get(f) != ""
+    )
+    return (filled / len(IDENTIFYING_FIELDS)) * 100
 
 
 def _get_completeness_status(completeness_pct: float) -> str:

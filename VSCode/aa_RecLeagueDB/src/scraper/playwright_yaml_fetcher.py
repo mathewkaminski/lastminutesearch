@@ -213,8 +213,14 @@ def fetch_page_as_yaml(
         with sync_playwright() as p:
             # Launch browser
             logger.info("Launching browser...")
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(ignore_https_errors=True)
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            context = browser.new_context(
+                ignore_https_errors=True,
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            )
             page = context.new_page()
 
             # Navigate to URL — try networkidle first, fall back to load for
@@ -225,6 +231,14 @@ def fetch_page_as_yaml(
             except Exception:
                 logger.info("networkidle timed out, retrying with wait_until='load'")
                 page.goto(url, wait_until="load", timeout=wait_time * 1000)
+
+            # Detect and wait for Cloudflare challenge to resolve
+            for attempt in range(6):  # up to ~15s
+                title = page.title() or ""
+                if "just a moment" not in title.lower():
+                    break
+                logger.info(f"Cloudflare challenge detected, waiting... (attempt {attempt + 1})")
+                page.wait_for_timeout(2500)
 
             # Extra wait for SPAs that render data after initial load
             page.wait_for_timeout(3000)

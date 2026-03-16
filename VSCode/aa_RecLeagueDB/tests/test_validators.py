@@ -12,7 +12,7 @@ COMPLETE_LEAGUE = {
     "day_of_week": "Monday",
     "start_time": "19:00:00",
     "venue_name": "Greenwood Arena",
-    "competition_level": "Recreational",
+    "source_comp_level": "Recreational",
     "gender_eligibility": "CoEd",
     "team_fee": 1200.0,
     "num_weeks": 10,

@@ -85,7 +85,7 @@ def calculate_quality_score(data: dict) -> int:
         "day_of_week",
         "num_weeks",
         "venue_name",
-        "competition_level",
+        "source_comp_level",
         "gender_eligibility",
         "has_referee",
         "players_per_side",

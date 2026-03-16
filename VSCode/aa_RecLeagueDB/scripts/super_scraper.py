@@ -37,7 +37,7 @@ def _get_existing_leagues(url: str) -> list[dict]:
     result = (
         get_client().table("leagues_metadata")
         .select("league_id, organization_name, num_teams, day_of_week, venue_name, "
-                "competition_level, gender_eligibility, sport_season_code, quality_score, "
+                "source_comp_level, gender_eligibility, sport_season_code, quality_score, "
                 "season_year, url_scraped")
         .eq("url_scraped", url)
         .eq("is_archived", False)

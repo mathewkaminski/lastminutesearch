@@ -31,7 +31,7 @@ def _merge(keep_id: str, archive_id: str) -> None:
 
 _COMPARE_FIELDS = [
     "organization_name", "sport_season_code", "season_year",
-    "day_of_week", "start_time", "venue_name", "competition_level",
+    "day_of_week", "start_time", "venue_name", "source_comp_level",
     "gender_eligibility", "team_fee", "individual_fee", "num_weeks",
     "quality_score", "url_scraped", "updated_at",
 ]

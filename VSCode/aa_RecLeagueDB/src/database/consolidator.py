@@ -8,7 +8,7 @@ _IDENTITY_FIELDS = (
     "season_year",
     "venue_name",
     "day_of_week",
-    "competition_level",
+    "source_comp_level",
 )
 
 

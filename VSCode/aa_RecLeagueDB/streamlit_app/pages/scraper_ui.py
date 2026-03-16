@@ -56,7 +56,7 @@ def _get_leagues_for_url(url: str) -> list[dict]:
     result = (
         get_client()
         .table("leagues_metadata")
-        .select("league_id, organization_name, day_of_week, competition_level, "
+        .select("league_id, organization_name, day_of_week, source_comp_level, "
                 "gender_eligibility, num_teams, quality_score, completeness_status, "
                 "sport_season_code, venue_name, team_fee, individual_fee")
         .eq("url_scraped", url)
@@ -189,7 +189,7 @@ def render():
             for lg in leagues:
                 q = lg.get("quality_score", 0)
                 day = lg.get("day_of_week") or "?"
-                level = lg.get("competition_level") or ""
+                level = lg.get("source_comp_level") or ""
                 gender = lg.get("gender_eligibility") or ""
                 teams = lg.get("num_teams")
                 teams_str = f"{teams} teams" if teams else "no team count"
@@ -336,7 +336,7 @@ def render():
             for i, lg in enumerate(st.session_state["fc_extracted"]):
                 day = lg.get("day_of_week") or "?"
                 org = lg.get("organization_name") or "Unknown"
-                level = lg.get("competition_level") or ""
+                level = lg.get("source_comp_level") or ""
                 gender = lg.get("gender_eligibility") or ""
                 pct = lg.get("identifying_fields_pct", 0)
                 teams = lg.get("num_teams")

@@ -94,7 +94,7 @@ def test_get_field_coverage_full():
     row = {
         "day_of_week": "Monday", "start_time": "19:00", "venue_name": "Lamport",
         "team_fee": 800.0, "individual_fee": None, "season_start_date": "2026-01-01",
-        "season_end_date": "2026-03-01", "competition_level": "Rec",
+        "season_end_date": "2026-03-01", "source_comp_level": "Rec",
         "gender_eligibility": "CoEd", "num_weeks": 10, "quality_score": 80,
     }
     with patch("src.database.leagues_reader.get_client", return_value=_make_mock_client([row])):
@@ -119,10 +119,10 @@ def test_get_duplicate_groups_finds_duplicates():
     rows = [
         {"league_id": "1", "organization_name": "TSSC", "sport_season_code": "V10",
          "season_year": 2026, "venue_name": "Lamport", "day_of_week": "Monday",
-         "competition_level": "Rec", "quality_score": 80, "url_scraped": "https://a.com"},
+         "source_comp_level": "Rec", "quality_score": 80, "url_scraped": "https://a.com"},
         {"league_id": "2", "organization_name": "TSSC", "sport_season_code": "V10",
          "season_year": 2026, "venue_name": "Lamport", "day_of_week": "Monday",
-         "competition_level": "Rec", "quality_score": 60, "url_scraped": "https://b.com"},
+         "source_comp_level": "Rec", "quality_score": 60, "url_scraped": "https://b.com"},
     ]
     with patch("src.database.leagues_reader.get_client", return_value=_make_mock_client(rows)):
         from src.database.leagues_reader import get_duplicate_groups
@@ -135,10 +135,10 @@ def test_get_duplicate_groups_no_duplicates():
     rows = [
         {"league_id": "1", "organization_name": "TSSC", "sport_season_code": "V10",
          "season_year": 2026, "venue_name": "Lamport", "day_of_week": "Monday",
-         "competition_level": "Rec", "quality_score": 80, "url_scraped": "https://a.com"},
+         "source_comp_level": "Rec", "quality_score": 80, "url_scraped": "https://a.com"},
         {"league_id": "2", "organization_name": "ZogSports", "sport_season_code": "S10",
          "season_year": 2026, "venue_name": "Other", "day_of_week": "Tuesday",
-         "competition_level": "Int", "quality_score": 70, "url_scraped": "https://b.com"},
+         "source_comp_level": "Int", "quality_score": 70, "url_scraped": "https://b.com"},
     ]
     with patch("src.database.leagues_reader.get_client", return_value=_make_mock_client(rows)):
         from src.database.leagues_reader import get_duplicate_groups

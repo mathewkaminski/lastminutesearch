@@ -20,7 +20,7 @@ COVERAGE_FIELDS = [
     "individual_fee",
     "season_start_date",
     "season_end_date",
-    "competition_level",
+    "source_comp_level",
     "gender_eligibility",
     "num_weeks",
 ]
@@ -32,7 +32,7 @@ _IDENTITY_FIELDS = (
     "season_year",
     "venue_name",
     "day_of_week",
-    "competition_level",
+    "source_comp_level",
 )
 
 
@@ -141,7 +141,7 @@ def get_duplicate_groups() -> list[dict]:
     """Find suspected duplicate leagues by identity-field grouping.
 
     Two records are suspected duplicates if they share the same
-    (org_name, sport_code, season_year, venue, day_of_week, competition_level).
+    (org_name, sport_code, season_year, venue, day_of_week, source_comp_level).
 
     Returns:
         List of dicts, each with keys 'key' (tuple) and 'records' (list of 2+ rows).
@@ -149,7 +149,7 @@ def get_duplicate_groups() -> list[dict]:
     client = get_client()
     fields = (
         "league_id, organization_name, sport_season_code, season_year, "
-        "venue_name, day_of_week, competition_level, quality_score, url_scraped, updated_at"
+        "venue_name, day_of_week, source_comp_level, quality_score, url_scraped, updated_at"
     )
     result = (
         client.table("leagues_metadata")

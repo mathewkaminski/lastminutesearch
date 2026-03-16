@@ -9,7 +9,7 @@ ENRICHABLE_FIELDS: list[str] = [
     "season_start_date", "season_end_date", "stat_holidays",
     "venue_name",
     "team_fee", "individual_fee", "registration_deadline",
-    "competition_level", "gender_eligibility", "players_per_side",
+    "source_comp_level", "gender_eligibility", "players_per_side",
     "slots_left",
     "has_referee", "requires_insurance", "insurance_policy_link",
 ]

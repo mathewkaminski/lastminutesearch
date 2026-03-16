@@ -31,7 +31,7 @@ def match_to_db(extraction: TeamExtractionResult, db_leagues: list[dict]) -> dic
         parts = [
             league.get("day_of_week") or "",
             league.get("gender_eligibility") or "",
-            league.get("competition_level") or "",
+            league.get("source_comp_level") or "",
         ]
         candidate = " ".join(p for p in parts if p).lower()
         score = SequenceMatcher(None, extraction.division_name.lower(), candidate).ratio()
@@ -59,7 +59,7 @@ class LeagueChecker:
     def _get_leagues_for_url(self, url: str) -> list[dict]:
         result = (
             self.supabase.table("leagues_metadata")
-            .select("league_id, organization_name, num_teams, day_of_week, competition_level, gender_eligibility, sport_season_code, quality_score")
+            .select("league_id, organization_name, num_teams, day_of_week, source_comp_level, gender_eligibility, sport_season_code, quality_score")
             .eq("url_scraped", url)
             .execute()
         )

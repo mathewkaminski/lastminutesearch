@@ -17,7 +17,7 @@ _ALL_FIELDS = [
     "league_id", "organization_name", "url_scraped", "base_domain",
     "sport_season_code", "season_year", "season_start_date", "season_end_date",
     "day_of_week", "start_time", "num_weeks", "venue_name",
-    "competition_level", "gender_eligibility",
+    "source_comp_level", "gender_eligibility",
     "team_fee", "individual_fee", "registration_deadline",
     "num_teams", "slots_left", "has_referee", "requires_insurance",
     "quality_score", "created_at", "updated_at",

@@ -10,7 +10,7 @@ def _row(league_id, org="Org A", sss="V01", year=2026, venue="Park",
         "season_year": year,
         "venue_name": venue,
         "day_of_week": day,
-        "competition_level": level,
+        "source_comp_level": level,
         "quality_score": quality,
     }
 
@@ -28,7 +28,7 @@ def test_identical_six_fields_flagged():
 def test_five_of_six_with_one_null_flagged():
     r1 = _row("A", quality=80)
     r2 = _row("B", quality=60)
-    r2["competition_level"] = None  # one null — still AUTO
+    r2["source_comp_level"] = None  # one null — still AUTO
     groups = find_within_url_duplicates([r1, r2])
     assert len(groups) == 1
     assert groups[0].confidence == "AUTO"

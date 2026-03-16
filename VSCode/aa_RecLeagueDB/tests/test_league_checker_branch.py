@@ -8,7 +8,7 @@ def _make_db_leagues(quality: int) -> list[dict]:
         "organization_name": "Test",
         "num_teams": 8,
         "day_of_week": "Monday",
-        "competition_level": "Rec",
+        "source_comp_level": "Rec",
         "gender_eligibility": "Mens",
         "sport_season_code": "S01",
         "quality_score": quality,

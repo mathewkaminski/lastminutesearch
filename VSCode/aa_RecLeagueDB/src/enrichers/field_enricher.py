@@ -36,7 +36,7 @@ ENRICHABLE_FIELDS: list[str] = [
     "season_start_date", "season_end_date", "stat_holidays",
     "venue_name",
     "team_fee", "individual_fee", "registration_deadline",
-    "competition_level", "gender_eligibility", "players_per_side",
+    "source_comp_level", "gender_eligibility", "players_per_side",
     "slots_left",
     "has_referee", "requires_insurance", "insurance_policy_link",
 ]
@@ -212,7 +212,7 @@ class FieldEnricher:
             known = {
                 k: v for k, v in lg.items()
                 if k in ("organization_name", "day_of_week", "gender_eligibility",
-                         "competition_level", "sport_season_code", "num_teams")
+                         "source_comp_level", "sport_season_code", "num_teams")
                 and v is not None
             }
             context_lines.append(f"  League {i}: {json.dumps(known)}")

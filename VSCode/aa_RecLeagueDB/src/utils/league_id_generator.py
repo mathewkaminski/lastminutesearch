@@ -6,7 +6,7 @@ A unique league is defined by 9 fields:
 3. season_year (derived from dates)
 4. venue_name (normalized)
 5. day_of_week
-6. competition_level (normalized)
+6. source_comp_level (normalized)
 7. gender_eligibility
 8. num_weeks
 9. players_per_side
@@ -111,7 +111,7 @@ def build_uniqueness_key(data: dict) -> dict:
     3. season_year
     4. venue_name
     5. day_of_week
-    6. competition_level
+    6. source_comp_level
     7. gender_eligibility
     8. num_weeks
     9. players_per_side
@@ -130,7 +130,7 @@ def build_uniqueness_key(data: dict) -> dict:
         "season_year": season_year,
         "venue_name": normalize_for_comparison(data.get("venue_name")),
         "day_of_week": normalize_for_comparison(data.get("day_of_week")),
-        "competition_level": normalize_for_comparison(data.get("competition_level")),
+        "source_comp_level": normalize_for_comparison(data.get("source_comp_level")),
         "gender_eligibility": normalize_for_comparison(data.get("gender_eligibility")),
         "num_weeks": _to_int(data.get("num_weeks")),
         "players_per_side": _to_int(data.get("players_per_side")),
@@ -219,7 +219,7 @@ def league_display_name(data: dict) -> str:
         parts.append(str(sport).title())
 
     # Day, level, gender
-    for field in ("day_of_week", "competition_level", "gender_eligibility"):
+    for field in ("day_of_week", "source_comp_level", "gender_eligibility"):
         val = data.get(field)
         if val:
             parts.append(str(val).title())
@@ -259,7 +259,7 @@ def keys_match_relaxed(key_a: dict, key_b: dict, min_overlap: int = 1) -> bool:
 
 IDENTIFYING_FIELDS = [
     "organization_name", "sport_name", "season_year", "venue_name",
-    "day_of_week", "competition_level", "gender_eligibility",
+    "day_of_week", "source_comp_level", "gender_eligibility",
     "num_weeks", "players_per_side",
 ]
 
@@ -372,7 +372,7 @@ def check_duplicate_league(
     3. season_year (derived)
     4. venue_name (normalized)
     5. day_of_week (normalized)
-    6. competition_level (normalized)
+    6. source_comp_level (normalized)
     7. gender_eligibility (normalized)
     8. num_weeks
     9. players_per_side
@@ -392,7 +392,7 @@ def check_duplicate_league(
         # to avoid scanning the entire table.
         _DEDUP_FIELDS = (
             "league_id, organization_name, sport_name, season_year, "
-            "venue_name, day_of_week, competition_level, gender_eligibility, "
+            "venue_name, day_of_week, source_comp_level, gender_eligibility, "
             "num_weeks, players_per_side"
         )
 
@@ -463,7 +463,7 @@ def format_uniqueness_key(key: dict) -> str:
         f"year={key.get('season_year', 'N/A')}",
         f"venue={key.get('venue_name', 'N/A')[:20]}",
         f"dow={key.get('day_of_week', 'N/A')[:3]}",
-        f"level={key.get('competition_level', 'N/A')[:3]}",
+        f"level={key.get('source_comp_level', 'N/A')[:3]}",
         f"gender={key.get('gender_eligibility', 'N/A')[:3]}",
         f"weeks={key.get('num_weeks', 'N/A')}",
         f"pps={key.get('players_per_side', 'N/A')}",

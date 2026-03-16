@@ -5,7 +5,16 @@ import re
 from typing import List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
+from src.config.sss_codes import SPORT_CODES
+
 logger = logging.getLogger(__name__)
+
+# Build sport keywords dynamically from SSS codes at module level
+_SPORT_KEYWORDS: set[str] = set()
+for _sport_name in SPORT_CODES.values():
+    for _word in _sport_name.lower().split():
+        if len(_word) > 2:  # skip "&", "up", etc.
+            _SPORT_KEYWORDS.add(_word)
 
 
 class DiscoveredLink:
@@ -170,61 +179,21 @@ def score_links(links: List[DiscoveredLink]) -> List[DiscoveredLink]:
     Returns:
         List of links with updated scores and clickable flags
     """
-    # Keywords and their scores
+    # All keywords at high priority (100 pts)
     high_priority_keywords = [
-        "register",
-        "signup",
-        "sign up",
-        "registration",
-        "schedule",
-        "standings",
-        "upcoming",
-        "leagues",
-        "games",
-        "season",
-        "current",
-        "join",
-        "enroll",
-        "programs",
-        "results",
-        "details",
-        "more info",
-        "more information",
-    ]
-    medium_priority_keywords = [
-        "league",
-        "division",
-        "divisions",
-        "team",
-        "teams",
-        "rules",
-        "pricing",
-        "format",
-        "competition",
-        "sport",
-        "sports",
-        "calendar",
-        "scores",
-        "program",
-        "volleyball",
-        "basketball",
-        "soccer",
-        "softball",
-        "baseball",
-        "hockey",
-        "football",
-        "dodgeball",
-        "badminton",
-        "tennis",
-        "pickleball",
-        "ultimate",
-        "frisbee",
-        "lacrosse",
-        "rugby",
+        # Navigation/action
+        "register", "signup", "sign up", "registration",
+        "schedule", "standings", "upcoming", "leagues", "games",
+        "season", "current", "join", "enroll", "programs",
+        "results", "details", "more info", "more information",
+        # Structural (promoted from former medium tier)
+        "league", "division", "divisions", "team", "teams",
+        "rules", "pricing", "format", "competition",
+        "sport", "sports", "calendar", "scores", "program",
     ]
 
     for link in links:
-        url_lower = (link.url + link.anchor_text).lower()
+        url_lower = (link.url + " " + link.anchor_text).lower()
 
         # Check high priority keywords
         for keyword in high_priority_keywords:
@@ -232,12 +201,10 @@ def score_links(links: List[DiscoveredLink]) -> List[DiscoveredLink]:
                 link.score += 100
                 break
 
-        # Check medium priority keywords (if no high priority match)
+        # Check sport name keywords (also high priority)
         if link.score < 100:
-            for keyword in medium_priority_keywords:
-                if keyword in url_lower:
-                    link.score += 50
-                    break
+            if any(kw in url_lower for kw in _SPORT_KEYWORDS):
+                link.score += 100
 
         # Penalize social media and external links
         if any(
@@ -303,7 +270,7 @@ _CATEGORY_KEYWORDS: dict[str, list[str]] = {
     "REGISTRATION": ["register", "signup", "sign up", "enroll", "payment", "fees", "pricing", "cost"],
     "POLICY": ["rules", "policies", "insurance", "waiver", "referee", "format"],
     "VENUE": ["venue", "location", "facility", "field", "gym", "arena", "court"],
-    "DETAIL": ["league", "division", "program", "season", "current", "calendar", "about", "sport", "join", "enroll", "upcoming", "more info", "more information", "volleyball", "basketball", "soccer", "softball", "hockey", "football", "dodgeball"],
+    "DETAIL": ["league", "division", "program", "season", "current", "calendar", "about", "sport", "join", "enroll", "upcoming", "more info", "more information"],
 }
 
 
@@ -329,6 +296,10 @@ def infer_link_category(anchor_text: str, page_type: Optional[str]) -> Optional[
     for category, keywords in _CATEGORY_KEYWORDS.items():
         if any(kw in text for kw in keywords):
             return category
+
+    # Check sport keywords for DETAIL category
+    if any(kw in text for kw in _SPORT_KEYWORDS):
+        return "DETAIL"
 
     return None
 

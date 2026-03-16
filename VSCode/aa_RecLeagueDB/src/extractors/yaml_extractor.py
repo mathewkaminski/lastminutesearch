@@ -144,6 +144,11 @@ def extract_league_data_from_yaml(
         if league.get("standardized_comp_level") is None and league.get("source_comp_level"):
             league["standardized_comp_level"] = normalize_comp_level(league["source_comp_level"])
 
+        # Default "None Found" when no comp level was extracted
+        if not league.get("source_comp_level") or not str(league["source_comp_level"]).strip():
+            league["source_comp_level"] = "None Found"
+            league["standardized_comp_level"] = "A"
+
         # Calculate completeness
         league["identifying_fields_pct"] = _calculate_identifying_completeness(league)
         league["completeness_status"] = _get_completeness_status(

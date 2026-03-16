@@ -32,6 +32,13 @@ def test_classify_returns_league_index():
         assert classify_page(SAMPLE_YAML) == "LEAGUE_INDEX"
 
 
+def test_classify_returns_medium_detail():
+    with patch("src.scraper.page_type_classifier.anthropic.Anthropic") as mock_cls:
+        mock_cls.return_value.messages.create.return_value = _mock_haiku("MEDIUM_DETAIL")
+        from src.scraper.page_type_classifier import classify_page
+        assert classify_page(SAMPLE_YAML) == "MEDIUM_DETAIL"
+
+
 def test_classify_returns_other():
     with patch("src.scraper.page_type_classifier.anthropic.Anthropic") as mock_cls:
         mock_cls.return_value.messages.create.return_value = _mock_haiku("OTHER")

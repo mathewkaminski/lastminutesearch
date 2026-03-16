@@ -1,7 +1,9 @@
 """Tests for yaml_link_parser module."""
 
 import pytest
-from src.scraper.yaml_link_parser import DiscoveredLink, infer_link_category
+from src.scraper.yaml_link_parser import (
+    DiscoveredLink, infer_link_category, score_links, _SPORT_KEYWORDS,
+)
 
 
 class TestFieldCategory:
@@ -33,6 +35,51 @@ class TestFieldCategory:
         link = DiscoveredLink(url="https://example.com", anchor_text="schedule")
         assert hasattr(link, "field_category")
         assert link.field_category is None  # default None before scoring
+
+
+class TestSportKeywords:
+    def test_sport_keywords_contains_expected_sports(self):
+        expected = {"volleyball", "basketball", "soccer", "dodgeball",
+                    "hockey", "lacrosse", "softball", "football", "rugby",
+                    "pickleball", "badminton", "tennis", "baseball", "cricket"}
+        assert expected.issubset(_SPORT_KEYWORDS)
+
+    def test_sport_keywords_excludes_short_words(self):
+        # Words <= 2 chars should be excluded
+        for word in _SPORT_KEYWORDS:
+            assert len(word) > 2
+
+
+class TestScoring:
+    def test_sport_name_link_scores_100(self):
+        link = DiscoveredLink(url="https://example.com/volleyball", anchor_text="Court Volleyball")
+        scored = score_links([link])
+        assert scored[0].score == 100
+
+    def test_structural_keyword_scores_100(self):
+        link = DiscoveredLink(url="https://example.com/info", anchor_text="League Rules")
+        scored = score_links([link])
+        assert scored[0].score == 100
+
+    def test_combined_keywords_dont_double_score(self):
+        # "Volleyball League" has both a high-priority keyword ("league") and a sport keyword
+        # Should only score 100, not 200
+        link = DiscoveredLink(url="https://example.com/vb", anchor_text="Volleyball League")
+        scored = score_links([link])
+        assert scored[0].score == 100
+
+    def test_no_keyword_scores_zero(self):
+        link = DiscoveredLink(url="https://example.com/about", anchor_text="About Us")
+        scored = score_links([link])
+        assert scored[0].score == 0
+
+    def test_social_media_penalized(self):
+        link = DiscoveredLink(url="https://facebook.com/league", anchor_text="Our Facebook")
+        scored = score_links([link])
+        assert scored[0].score < 100
+
+    def test_sport_keyword_infers_detail_category(self):
+        assert infer_link_category("indoor volleyball", None) == "DETAIL"
 
 
 class TestFieldCategoryIntegration:

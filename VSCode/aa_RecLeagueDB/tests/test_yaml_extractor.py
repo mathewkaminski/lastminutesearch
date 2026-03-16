@@ -154,9 +154,24 @@ class TestCompLevelNormalization:
 
         assert leagues[0]["standardized_comp_level"] == "A"
 
-    def test_valid_single_letter_accepted(self):
-        """When LLM returns valid single letter, it's accepted as-is."""
+    def test_null_comp_level_defaults_to_none_found(self):
+        """When LLM returns null source_comp_level, it defaults to 'None Found' / 'A'."""
+        captured = {}
+        import src.extractors.yaml_extractor as mod
+        mock = _make_fake_anthropic(captured, response_json=_STUB_LEAGUE_JSON)
+
+        with patch.object(mod, "anthropic", mock):
+            leagues = mod.extract_league_data_from_yaml(SIMPLE_YAML, url="http://example.com")
+
+        assert leagues[0]["source_comp_level"] == "None Found"
+        assert leagues[0]["standardized_comp_level"] == "A"
+
+    def test_valid_single_letter_accepted_with_source(self):
+        """When LLM returns valid single letter + source, both are preserved."""
         stub_json = _STUB_LEAGUE_JSON.replace(
+            '"source_comp_level": null',
+            '"source_comp_level": "Intermediate"'
+        ).replace(
             '"standardized_comp_level": null',
             '"standardized_comp_level": "B"'
         )
@@ -167,4 +182,5 @@ class TestCompLevelNormalization:
         with patch.object(mod, "anthropic", mock):
             leagues = mod.extract_league_data_from_yaml(SIMPLE_YAML, url="http://example.com")
 
+        assert leagues[0]["source_comp_level"] == "Intermediate"
         assert leagues[0]["standardized_comp_level"] == "B"

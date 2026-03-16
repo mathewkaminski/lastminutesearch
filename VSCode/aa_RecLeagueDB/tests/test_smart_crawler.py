@@ -404,3 +404,146 @@ class TestAdaptiveDepth:
         # (SCHEDULE is already covered by /schedule from the normal pass)
         schedule2_count = fetch_calls.count("https://example.com/schedule2")
         assert schedule2_count <= 1  # at most once from normal pass, not extra adaptive pass
+
+
+# ---------------------------------------------------------------------------
+# New tests: 5-way decision matrix
+# ---------------------------------------------------------------------------
+
+class TestDecisionMatrix:
+    def test_league_detail_collected_regardless_of_score(self):
+        """LEAGUE_DETAIL pages are always collected, even with low link scores."""
+        home_yaml = _make_yaml([("/info", "Some Info")])  # low score anchor
+        detail_yaml = "- role: main\n  name: League fees and registration"
+
+        def fake_fetch(url, **kwargs):
+            if url == "https://example.com":
+                return (home_yaml, {})
+            return (detail_yaml, {})
+
+        def fake_classify(yaml):
+            if yaml == home_yaml:
+                return "LEAGUE_INDEX"
+            return "LEAGUE_DETAIL"
+
+        with (
+            patch("src.scraper.smart_crawler.fetch_page_as_yaml", side_effect=fake_fetch),
+            patch("src.scraper.smart_crawler.classify_page", side_effect=fake_classify),
+        ):
+            from src.scraper.smart_crawler import crawl
+            pages, _, _ = crawl("https://example.com")
+
+        urls = [url for url, _y, _ft in pages]
+        assert "https://example.com/info" in urls
+
+    def test_league_detail_with_high_score_recurses(self):
+        """LEAGUE_DETAIL pages with score >= 100 get their links followed."""
+        home_yaml = _make_yaml([("/volleyball", "Court Volleyball")])  # sport keyword = 100
+        detail_yaml = _make_yaml([("/event/monday", "Monday League")])
+        event_yaml = "- role: main\n  name: Monday league details"
+
+        def fake_fetch(url, **kwargs):
+            if url == "https://example.com":
+                return (home_yaml, {})
+            if url == "https://example.com/volleyball":
+                return (detail_yaml, {})
+            return (event_yaml, {})
+
+        def fake_classify(yaml):
+            if yaml == home_yaml:
+                return "LEAGUE_INDEX"
+            return "LEAGUE_DETAIL"
+
+        with (
+            patch("src.scraper.smart_crawler.fetch_page_as_yaml", side_effect=fake_fetch),
+            patch("src.scraper.smart_crawler.classify_page", side_effect=fake_classify),
+        ):
+            from src.scraper.smart_crawler import crawl
+            pages, _, _ = crawl("https://example.com")
+
+        urls = [url for url, _y, _ft in pages]
+        assert "https://example.com/volleyball" in urls
+        assert "https://example.com/event/monday" in urls
+
+    def test_medium_detail_stored_not_collected(self):
+        """MEDIUM_DETAIL pages are stored via _store_scrape_detail, not in collected_pages."""
+        home_yaml = _make_yaml([("/standings", "Standings")])
+
+        def fake_fetch(url, **kwargs):
+            if url == "https://example.com":
+                return (home_yaml, {})
+            return ("- role: main\n  name: Team Standings", {})
+
+        def fake_classify(yaml):
+            if "Standings" in str(yaml) and "Team" in str(yaml):
+                return "MEDIUM_DETAIL"
+            return "LEAGUE_INDEX"
+
+        with (
+            patch("src.scraper.smart_crawler.fetch_page_as_yaml", side_effect=fake_fetch),
+            patch("src.scraper.smart_crawler.classify_page", side_effect=fake_classify),
+            patch("src.scraper.smart_crawler._store_scrape_detail") as mock_store,
+        ):
+            from src.scraper.smart_crawler import crawl
+            pages, _, _ = crawl("https://example.com")
+
+        urls = [url for url, _y, _ft in pages]
+        assert "https://example.com/standings" not in urls
+        mock_store.assert_called_once()
+        call_kwargs = mock_store.call_args
+        assert call_kwargs[1]["page_type"] == "MEDIUM_DETAIL" or call_kwargs[0][2] == "MEDIUM_DETAIL"
+
+    def test_schedule_stored_not_collected(self):
+        """SCHEDULE pages are stored in scrape_detail, not collected for extraction."""
+        home_yaml = _make_yaml([("/games", "Games")])
+
+        def fake_fetch(url, **kwargs):
+            if url == "https://example.com":
+                return (home_yaml, {})
+            return ("- role: main\n  name: Game Schedule", {})
+
+        def fake_classify(yaml):
+            if "Game Schedule" in str(yaml):
+                return "SCHEDULE"
+            return "LEAGUE_INDEX"
+
+        with (
+            patch("src.scraper.smart_crawler.fetch_page_as_yaml", side_effect=fake_fetch),
+            patch("src.scraper.smart_crawler.classify_page", side_effect=fake_classify),
+            patch("src.scraper.smart_crawler._store_scrape_detail") as mock_store,
+        ):
+            from src.scraper.smart_crawler import crawl
+            pages, _, _ = crawl("https://example.com")
+
+        urls = [url for url, _y, _ft in pages]
+        assert "https://example.com/games" not in urls
+        mock_store.assert_called_once()
+
+    def test_other_with_high_score_collected_and_recursed(self):
+        """OTHER pages with score >= 100 are collected and their links are followed."""
+        home_yaml = _make_yaml([("/register", "Register")])  # "register" = 100 pts
+        register_yaml = _make_yaml([("/form", "Registration Form")])
+        form_yaml = "- role: main\n  name: Form"
+
+        visited = []
+
+        def fake_fetch(url, **kwargs):
+            visited.append(url)
+            if url == "https://example.com":
+                return (home_yaml, {})
+            if url == "https://example.com/register":
+                return (register_yaml, {})
+            return (form_yaml, {})
+
+        with (
+            patch("src.scraper.smart_crawler.fetch_page_as_yaml", side_effect=fake_fetch),
+            patch("src.scraper.smart_crawler.classify_page", return_value="OTHER"),
+            patch("src.scraper.smart_crawler._store_scrape_detail"),
+        ):
+            from src.scraper.smart_crawler import crawl
+            pages, _, _ = crawl("https://example.com")
+
+        urls = [url for url, _y, _ft in pages]
+        assert "https://example.com/register" in urls
+        # The links from /register should also be followed
+        assert "https://example.com/form" in visited

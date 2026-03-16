@@ -1,4 +1,4 @@
-"""Deterministic crawler: Playwright YAML + 4-way Haiku classifier.
+"""Deterministic crawler: Playwright YAML + 5-way Haiku classifier.
 
 Navigation algorithm:
   Layer 0 — Fetch start URL. Always collect (home pages carry fee/schedule data
@@ -6,10 +6,20 @@ Navigation algorithm:
              the root URL and collect it.
              If classified LEAGUE_INDEX, follow internal links.
   Step A  — Visit ALL primary links (score >= 100). For each:
-              LEAGUE_DETAIL / SCHEDULE → collect
-              LEAGUE_INDEX             → follow internal links (_follow_index_links)
-              OTHER                    → skip
-  No Step B (secondary), no Step C (BFS deep crawl).
+              LEAGUE_INDEX             → collect + follow internal links
+              LEAGUE_DETAIL            → collect; recurse if score >= 100
+              SCHEDULE / MEDIUM_DETAIL → store in scrape_detail for later
+              OTHER (score >= 100)     → collect + recurse
+              OTHER (score < 100)      → skip
+
+Decision matrix (used in both _follow_index_links and Step A):
+  | Classification | score >= 100       | score < 100           |
+  |----------------|--------------------|-----------------------|
+  | LEAGUE_INDEX   | collect + recurse  | collect + recurse     |
+  | LEAGUE_DETAIL  | collect + recurse  | collect (no recurse)  |
+  | SCHEDULE       | store scrape_detail| store scrape_detail   |
+  | MEDIUM_DETAIL  | store scrape_detail| store scrape_detail   |
+  | OTHER          | collect + recurse  | skip                  |
 """
 
 import logging
@@ -63,6 +73,45 @@ def _normalize_url(url: str) -> str:
         return url
 
 
+def _store_scrape_detail(
+    parent_url: str,
+    url: str,
+    page_type: str,
+    yaml_content: str = "",
+    full_text: str = "",
+) -> None:
+    """Store a MEDIUM_DETAIL or SCHEDULE URL in scrape_detail for later processing.
+
+    Looks up scrape_id from scrape_queue by matching the parent_url, then inserts
+    into scrape_detail. Fails silently on DB errors (crawl should not abort).
+    """
+    try:
+        from src.database.supabase_client import get_client
+        client = get_client()
+
+        # Look up scrape_id from scrape_queue for the parent URL
+        scrape_id = None
+        result = client.table("scrape_queue").select("scrape_id").eq("url", parent_url).execute()
+        if result.data:
+            scrape_id = result.data[0]["scrape_id"]
+
+        record = {
+            "url": url,
+            "page_type": page_type,
+            "parent_url": parent_url,
+            "yaml_content": yaml_content,
+            "full_text": full_text,
+            "status": "PENDING",
+        }
+        if scrape_id:
+            record["scrape_id"] = scrape_id
+
+        client.table("scrape_detail").insert(record).execute()
+        logger.debug(f"Stored scrape_detail: {page_type} {url}")
+    except Exception as e:
+        logger.warning(f"Failed to store scrape_detail for {url}: {e}")
+
+
 def _follow_index_links(
     index_url: str,
     index_yaml: str,
@@ -75,14 +124,13 @@ def _follow_index_links(
     force_refresh: bool = False,
     parent_map: dict = None,
 ) -> None:
-    """Fetch and classify internal links found on a LEAGUE_INDEX page.
+    """Fetch and classify internal links found on a LEAGUE_INDEX or LEAGUE_DETAIL page.
 
-    Adds LEAGUE_DETAIL and SCHEDULE pages to league_pages.
-    Recurses into nested LEAGUE_INDEX pages up to max_index_depth.
+    Uses the 5-way decision matrix to collect, recurse, store, or skip each link.
 
     Args:
-        index_url: URL of the index page (for logging)
-        index_yaml: YAML content of the index page
+        index_url: URL of the parent page (for logging and parent_map)
+        index_yaml: YAML content of the parent page
         base_url: Site root URL (for domain filtering)
         visited: Set of already-visited URLs (mutated in-place)
         league_pages: Accumulator list (mutated in-place)
@@ -90,6 +138,7 @@ def _follow_index_links(
         current_depth: Current recursion depth (starts at 1)
         use_cache: Whether to use the page cache
         force_refresh: If True, bypass cache and re-fetch all pages
+        parent_map: Dict mapping child_url → parent_url (mutated in-place)
     """
     try:
         tree = yaml_lib.safe_load(index_yaml)
@@ -117,6 +166,9 @@ def _follow_index_links(
         if len(candidates) >= MAX_DETAIL_LINKS:
             break
 
+    # Score candidates before fetching so we can use score in the decision matrix
+    candidates = score_links(candidates)
+
     for link in candidates:
         visited.add(link.url)  # already normalized above
         try:
@@ -124,15 +176,9 @@ def _follow_index_links(
             page_type = classify_page(page_yaml)
             full_text = page_meta.get("full_text", "") if page_meta else ""
 
-            if page_type in ("LEAGUE_DETAIL", "SCHEDULE"):
-                logger.info(f"[Index->{page_type}] {link.url}")
-                league_pages.append((link.url, page_yaml, full_text))
-                if parent_map is not None:
-                    parent_map[link.url] = index_url
-
-            elif page_type == "LEAGUE_INDEX":
+            if page_type == "LEAGUE_INDEX":
+                # Always collect + recurse
                 logger.info(f"[Index->INDEX depth={current_depth}] {link.url}")
-                # Also collect the index page itself (partial data better than nothing)
                 league_pages.append((link.url, page_yaml, full_text))
                 if parent_map is not None:
                     parent_map[link.url] = index_url
@@ -149,7 +195,57 @@ def _follow_index_links(
                         force_refresh=force_refresh,
                         parent_map=parent_map,
                     )
-            # OTHER: skip
+
+            elif page_type == "LEAGUE_DETAIL":
+                # Always collect; recurse only if high-scored
+                logger.info(f"[Index->DETAIL] {link.url}")
+                league_pages.append((link.url, page_yaml, full_text))
+                if parent_map is not None:
+                    parent_map[link.url] = index_url
+                if link.score >= 100 and current_depth < max_index_depth:
+                    _follow_index_links(
+                        index_url=link.url,
+                        index_yaml=page_yaml,
+                        base_url=base_url,
+                        visited=visited,
+                        league_pages=league_pages,
+                        max_index_depth=max_index_depth,
+                        current_depth=current_depth + 1,
+                        use_cache=use_cache,
+                        force_refresh=force_refresh,
+                        parent_map=parent_map,
+                    )
+
+            elif page_type in ("SCHEDULE", "MEDIUM_DETAIL"):
+                # Store in scrape_detail for later processing
+                logger.info(f"[Index->{page_type}] {link.url} (saved for later)")
+                _store_scrape_detail(
+                    parent_url=index_url,
+                    url=link.url,
+                    page_type=page_type,
+                    yaml_content=page_yaml,
+                    full_text=full_text,
+                )
+
+            else:  # OTHER
+                if link.score >= 100:
+                    # High-scored OTHER — collect + recurse
+                    logger.info(f"[Index->OTHER-scored] {link.url}")
+                    league_pages.append((link.url, page_yaml, full_text))
+                    if current_depth < max_index_depth:
+                        _follow_index_links(
+                            index_url=link.url,
+                            index_yaml=page_yaml,
+                            base_url=base_url,
+                            visited=visited,
+                            league_pages=league_pages,
+                            max_index_depth=max_index_depth,
+                            current_depth=current_depth + 1,
+                            use_cache=use_cache,
+                            force_refresh=force_refresh,
+                            parent_map=parent_map,
+                        )
+                # else: skip
 
         except Exception as e:
             logger.warning(f"[Index follow] Fetch failed {link.url}: {e}")
@@ -269,7 +365,7 @@ def crawl(
 
     logger.info(f"Home primary links: {len(primary_links)}")
 
-    # --- Step A: Visit ALL primary links ---
+    # --- Step A: Visit ALL primary links (same 5-way decision matrix) ---
     for link in primary_links:
         # Infer and record category coverage
         if link.field_category is None:
@@ -287,11 +383,7 @@ def crawl(
             page_type = classify_page(page_yaml)
             full_text = page_meta.get("full_text", "") if page_meta else ""
 
-            if page_type in ("LEAGUE_DETAIL", "SCHEDULE"):
-                logger.info(f"[Step A {page_type}] {link.url}")
-                collected_pages.append((link.url, page_yaml, full_text))
-
-            elif page_type == "LEAGUE_INDEX":
+            if page_type == "LEAGUE_INDEX":
                 logger.info(f"[Step A LEAGUE_INDEX] {link.url}")
                 collected_pages.append((link.url, page_yaml, full_text))
                 _follow_index_links(
@@ -307,12 +399,50 @@ def crawl(
                     parent_map=parent_map,
                 )
 
+            elif page_type == "LEAGUE_DETAIL":
+                logger.info(f"[Step A DETAIL] {link.url}")
+                collected_pages.append((link.url, page_yaml, full_text))
+                # Recurse into high-scored detail pages
+                if link.score >= 100:
+                    _follow_index_links(
+                        index_url=link.url,
+                        index_yaml=page_yaml,
+                        base_url=start_url,
+                        visited=visited,
+                        league_pages=collected_pages,
+                        max_index_depth=max_index_depth,
+                        current_depth=1,
+                        use_cache=use_cache,
+                        force_refresh=force_refresh,
+                        parent_map=parent_map,
+                    )
+
+            elif page_type in ("SCHEDULE", "MEDIUM_DETAIL"):
+                logger.info(f"[Step A {page_type}] {link.url} (saved for later)")
+                _store_scrape_detail(
+                    parent_url=start_url,
+                    url=link.url,
+                    page_type=page_type,
+                    yaml_content=page_yaml,
+                    full_text=full_text,
+                )
+
             else:
                 # OTHER — but scored 100+ so still worth extracting from.
-                # e.g. GameSheet schedule pages that show "no matching games"
-                # due to a date filter but still carry division structure in the YAML.
                 logger.info(f"[Step A OTHER-scored] {link.url}")
                 collected_pages.append((link.url, page_yaml, full_text))
+                _follow_index_links(
+                    index_url=link.url,
+                    index_yaml=page_yaml,
+                    base_url=start_url,
+                    visited=visited,
+                    league_pages=collected_pages,
+                    max_index_depth=max_index_depth,
+                    current_depth=1,
+                    use_cache=use_cache,
+                    force_refresh=force_refresh,
+                    parent_map=parent_map,
+                )
 
         except Exception as e:
             logger.warning(f"[Step A] Fetch failed {link.url}: {e}")
@@ -330,13 +460,16 @@ def crawl(
             adaptive_links = extract_navigation_links(
                 home_tree, start_url, min_score=60  # lowered threshold
             )
-            visited_urls = {p[0] for p in collected_pages}
             for cat in uncovered:
                 cat_links = [
                     lnk for lnk in adaptive_links
-                    if lnk.field_category == cat and lnk.url not in visited_urls
+                    if lnk.field_category == cat and _normalize_url(lnk.url) not in visited
                 ][:3]  # max 3 per uncovered category
                 for lnk in cat_links:
+                    norm_url = _normalize_url(lnk.url)
+                    if norm_url in visited:
+                        continue
+                    visited.add(norm_url)
                     page_yaml, page_meta = fetch_page_as_yaml(
                         lnk.url,
                         use_cache=use_cache,
@@ -346,7 +479,6 @@ def crawl(
                         full_text = page_meta.get("full_text", "") if page_meta else ""
                         collected_pages.append((lnk.url, page_yaml, full_text))
                         category_coverage[cat].append(lnk.url)
-                        visited_urls.add(lnk.url)
 
     if not collected_pages:
         logger.warning(f"No league pages found for {start_url}")

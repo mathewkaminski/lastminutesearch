@@ -11,14 +11,15 @@ _TAIL_CHARS = 2000
 
 _PROMPT = """\
 Classify this rec-sports page. Reply with ONE word only:
-LEAGUE_DETAIL - specific league: fees, venue, schedule, registration
+LEAGUE_INDEX - overview listing multiple leagues/divisions with links to details
+LEAGUE_DETAIL - specific league page: fees, venue, schedule, registration info
+MEDIUM_DETAIL - standings, statistics, team rosters, team listings, rules, policies
 SCHEDULE - game matchups with dates/times/teams
-LEAGUE_INDEX - overview listing multiple leagues/divisions
-OTHER - homepage, login, about, contact, etc.
+OTHER - homepage, login, about, contact, blog, etc.
 
 {yaml_snippet}"""
 
-_VALID = {"LEAGUE_DETAIL", "SCHEDULE", "LEAGUE_INDEX", "OTHER"}
+_VALID = {"LEAGUE_DETAIL", "SCHEDULE", "LEAGUE_INDEX", "MEDIUM_DETAIL", "OTHER"}
 
 
 def _build_snippet(yaml_content: str) -> str:

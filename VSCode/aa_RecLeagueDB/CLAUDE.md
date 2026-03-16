@@ -118,6 +118,7 @@ In `.env` (root, never commit):
 ```bash
 SUPABASE_URL=
 SUPABASE_KEY=          # service role key
+PSQL_CONNECTION_STRING= # direct psql connection to Supabase PostgreSQL
 OPENAI_API_KEY=
 SERPER_API_KEY=
 FIRECRAWL_API_KEY=

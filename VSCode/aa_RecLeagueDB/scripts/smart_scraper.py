@@ -31,7 +31,7 @@ CSV_COLUMNS = [
     "organization_name", "url_scraped", "sport_name", "season_name",
     "sport_season_code", "season_year", "season_start_date", "season_end_date",
     "day_of_week", "start_time", "end_time", "num_weeks", "time_played_per_week",
-    "stat_holidays", "venue_name", "competition_level", "gender_eligibility",
+    "stat_holidays", "venue_name", "source_comp_level", "standardized_comp_level", "gender_eligibility",
     "team_fee", "individual_fee", "registration_deadline",
     "num_teams", "slots_left", "has_referee", "requires_insurance",
     "insurance_policy_link", "players_per_side", "team_capacity",

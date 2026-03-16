@@ -43,7 +43,8 @@ _STUB_LEAGUE_JSON = """{
     "time_played_per_week": null,
     "stat_holidays": null,
     "venue_name": null,
-    "competition_level": null,
+    "source_comp_level": null,
+    "standardized_comp_level": null,
     "gender_eligibility": "CoEd",
     "players_per_side": null,
     "team_fee": null,
@@ -58,10 +59,10 @@ _STUB_LEAGUE_JSON = """{
 }"""
 
 
-def _make_fake_anthropic(captured_prompt: dict):
+def _make_fake_anthropic(captured_prompt: dict, response_json: str = None):
     """Return a mock anthropic module that captures messages sent to Claude."""
     mock_content = MagicMock()
-    mock_content.text = _STUB_LEAGUE_JSON
+    mock_content.text = response_json or _STUB_LEAGUE_JSON
 
     mock_response = MagicMock()
     mock_response.content = [mock_content]
@@ -116,3 +117,54 @@ class TestTwoTierExtraction:
 
         prompt_text = str(captured_prompt["messages"])
         assert "insurance_policy_link" in prompt_text
+
+
+class TestCompLevelNormalization:
+    def test_fallback_fills_standardized_from_source(self):
+        """When LLM returns source_comp_level but null standardized, fallback fills it."""
+        stub_json = _STUB_LEAGUE_JSON.replace(
+            '"source_comp_level": null',
+            '"source_comp_level": "Recreational"'
+        )
+        captured = {}
+        import src.extractors.yaml_extractor as mod
+        mock = _make_fake_anthropic(captured, response_json=stub_json)
+
+        with patch.object(mod, "anthropic", mock):
+            leagues = mod.extract_league_data_from_yaml(SIMPLE_YAML, url="http://example.com")
+
+        assert leagues[0]["source_comp_level"] == "Recreational"
+        assert leagues[0]["standardized_comp_level"] == "C"
+
+    def test_invalid_standardized_gets_cleared_and_fallback_runs(self):
+        """When LLM returns invalid standardized (e.g., 'XY'), it gets cleared."""
+        stub_json = _STUB_LEAGUE_JSON.replace(
+            '"source_comp_level": null',
+            '"source_comp_level": "Competitive"'
+        ).replace(
+            '"standardized_comp_level": null',
+            '"standardized_comp_level": "XY"'
+        )
+        captured = {}
+        import src.extractors.yaml_extractor as mod
+        mock = _make_fake_anthropic(captured, response_json=stub_json)
+
+        with patch.object(mod, "anthropic", mock):
+            leagues = mod.extract_league_data_from_yaml(SIMPLE_YAML, url="http://example.com")
+
+        assert leagues[0]["standardized_comp_level"] == "A"
+
+    def test_valid_single_letter_accepted(self):
+        """When LLM returns valid single letter, it's accepted as-is."""
+        stub_json = _STUB_LEAGUE_JSON.replace(
+            '"standardized_comp_level": null',
+            '"standardized_comp_level": "B"'
+        )
+        captured = {}
+        import src.extractors.yaml_extractor as mod
+        mock = _make_fake_anthropic(captured, response_json=stub_json)
+
+        with patch.object(mod, "anthropic", mock):
+            leagues = mod.extract_league_data_from_yaml(SIMPLE_YAML, url="http://example.com")
+
+        assert leagues[0]["standardized_comp_level"] == "B"

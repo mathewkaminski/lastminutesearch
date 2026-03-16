@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any, List
 import anthropic
 
 from src.config.sss_codes import validate_sss_code, build_sss_code
+from src.utils.comp_level_normalizer import normalize_comp_level
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,20 @@ def extract_league_data_from_yaml(
             )
             league["players_per_side"] = url_nvn
 
+        # Normalize standardized_comp_level via fallback if LLM didn't set it
+        # Coerce empty strings to None
+        if league.get("standardized_comp_level") in ("", None):
+            league["standardized_comp_level"] = None
+        # Validate LLM output: must be single uppercase A-Z letter
+        std = league.get("standardized_comp_level")
+        if std and (len(str(std)) != 1 or not str(std).isalpha()):
+            league["standardized_comp_level"] = None
+        elif std:
+            league["standardized_comp_level"] = str(std).upper()
+        # Fallback: derive from source_comp_level if still null
+        if league.get("standardized_comp_level") is None and league.get("source_comp_level"):
+            league["standardized_comp_level"] = normalize_comp_level(league["source_comp_level"])
+
         # Calculate completeness
         league["identifying_fields_pct"] = _calculate_identifying_completeness(league)
         league["completeness_status"] = _get_completeness_status(
@@ -222,7 +237,8 @@ def _build_yaml_extraction_prompt(yaml_content: str, url: str, full_text: str = 
       "time_played_per_week": "integer (game duration in minutes, e.g. 60) or null",
       "stat_holidays": "array of objects [{{"date": "YYYY-MM-DD", "reason": "string"}}] for excluded/no-game dates, or null",
       "venue_name": "string or null",
-      "competition_level": "string (e.g., Recreational, Intermediate, Competitive) or null",
+      "source_comp_level": "string - competition level EXACTLY as described on the page (e.g., 'A League', 'Gold Division', 'Competitive', 'Recreational'). Preserve the league's own wording. null if not specified.",
+      "standardized_comp_level": "string - single letter A-Z ranking. A=most competitive, then B, C, D descending. Map: Competitive/A/Gold/Premier/Division 1 → A, Intermediate/B/Silver → B, Recreational/C/Bronze/House → C. Use the league's own hierarchy. null if unclear.",
       "gender_eligibility": "string (Mens|Womens|CoEd|Other) or null",
       "players_per_side": "integer — parse from format strings like '7v7'→7, '6 v 6'→6, '5vs5'→5, '4 on 4'→4. Check headings, URLs, and league names FIRST. Do NOT guess from roster size or other indirect clues. null if no NvN pattern found.",
       "team_fee": "number (in dollars) or null",
@@ -245,6 +261,7 @@ INSTRUCTIONS:
 - sport_name: Use the ACTUAL sport name from the page. "Ball Hockey" not "Ice Hockey". "3-Pitch Softball" not "Baseball". Read the page heading and content carefully.
 - season_name: Use the page's own season label. If the page says "Late Winter 2026 Leagues", use "Late Winter". If it says "Summer", use "Summer".
 - If a page lists multiple divisions/formats (e.g., 6v6 and 8v8), extract both as separate leagues
+- CRITICAL: If a page describes multiple divisions, tiers, or skill levels for the SAME sport (e.g., "A League" and "B League", "Division 1" and "Division 2", "Gold" and "Silver", "Competitive" and "Recreational"), extract EACH division as a SEPARATE league entry. Each gets its own source_comp_level and standardized_comp_level. Example: "Women's A League (competitive)" and "Women's B League (recreational)" on the same night = TWO separate league entries.
 - For dates, infer year from context (e.g., "June-August" = current/next year context)
 - For time, convert "7pm" → "19:00:00", "7:30pm" → "19:30:00". If multiple start times are listed (rotating schedule), use the EARLIEST one.
 - For time_played_per_week: look for patterns like "60 min", "1 hour", "90 minutes" in the league description or detail section.
@@ -473,7 +490,7 @@ def _calculate_identifying_completeness(league: Dict[str, Any]) -> float:
     3. season_year (derived from season_start_date / season_end_date)
     4. venue_name
     5. day_of_week
-    6. competition_level
+    6. source_comp_level
     7. gender_eligibility
     8. num_weeks
     9. players_per_side

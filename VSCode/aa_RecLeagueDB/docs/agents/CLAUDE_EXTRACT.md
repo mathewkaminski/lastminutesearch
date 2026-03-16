@@ -206,7 +206,7 @@ The accessibility tree YAML has this structure:
     "team_fee": decimal,
     "individual_fee": decimal,
     "venue_name": str,  # Freeform text (not FK yet)
-    "competition_level": str,
+    "source_comp_level": str,
     "gender_eligibility": enum,  # Mens, Womens, CoEd, Other, Unsure
     # ... see full schema in database/validators.py
 }
@@ -311,7 +311,7 @@ URL → YAML Snapshots → Link Discovery → League Extraction → Database
     "individual_fee": None,
     "num_teams": 12,
     "venue_name": "Riverside High School",
-    "competition_level": "Recreational",
+    "source_comp_level": "Recreational",
     "gender_eligibility": "CoEd",
     "num_weeks": 12,
     "time_played_per_week": "1:30:00",
@@ -336,7 +336,7 @@ URL → YAML Snapshots → Link Discovery → League Extraction → Database
 - `team_fee` OR `individual_fee`
 - `season_start_date`
 - `season_end_date`
-- `competition_level`
+- `source_comp_level`
 - `gender_eligibility`
 
 **Optional fields:**
@@ -349,7 +349,7 @@ URL → YAML Snapshots → Link Discovery → League Extraction → Database
 - `insurance_policy_link`
 
 **Deduplication:** Before insertion, check for duplicate using 8-field uniqueness model:
-- organization_name, sport_season_code, season_year, venue_name, day_of_week, competition_level, gender_eligibility, num_weeks
+- organization_name, sport_season_code, season_year, venue_name, day_of_week, source_comp_level, gender_eligibility, num_weeks
 - If duplicate found: keep highest quality_score, delete old record
 
 ---

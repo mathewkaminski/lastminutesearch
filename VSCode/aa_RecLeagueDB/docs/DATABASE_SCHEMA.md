@@ -50,7 +50,8 @@ League data is organized into three tiers:
 | Has Referee | `has_referee` | boolean | |
 | Players per Side | `players_per_side` | int | From NvN patterns |
 | Venue | `venue_name` | text | FK via venue_id (deferred) |
-| Skill Level | `competition_level` | text | Rec/Int/Comp |
+| Skill Level (raw) | `source_comp_level` | text | Raw label from page |
+| Skill Level (std) | `standardized_comp_level` | varchar(1) | A/B/C/D single letter |
 | Gender | `gender_eligibility` | text | Mens/Womens/CoEd/Other |
 
 ### Tier 2 — Structured Data
@@ -85,7 +86,7 @@ A unique league is defined by:
 3. `season_year` (derived from dates)
 4. `venue_name` (normalized)
 5. `day_of_week`
-6. `competition_level` (normalized)
+6. `source_comp_level` (raw label from page)
 7. `gender_eligibility`
 8. `num_weeks`
 9. `players_per_side`

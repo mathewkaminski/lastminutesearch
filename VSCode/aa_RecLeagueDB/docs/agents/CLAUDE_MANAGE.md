@@ -136,7 +136,7 @@ WHERE season_end_date < season_start_date
 - `team_fee` OR `individual_fee` (at least one)
 - `season_start_date`
 - `season_end_date`
-- `competition_level`
+- `source_comp_level`
 - `gender_eligibility`
 
 **Test:**
@@ -177,7 +177,7 @@ triggers `super_scraper.run()` (deep crawl + team count pass) instead of the sta
 3. `season_year` (derived from dates)
 4. `venue_name` (normalized, lowercase)
 5. `day_of_week`
-6. `competition_level` (normalized)
+6. `source_comp_level` (normalized)
 
 **Deduplication logic:**
 ```sql
@@ -187,7 +187,7 @@ SELECT
     season_year,
     LOWER(venue_name) as venue,
     day_of_week,
-    LOWER(competition_level) as level,
+    LOWER(source_comp_level) as level,
     COUNT(*) as duplicates
 FROM leagues_metadata
 GROUP BY 1, 2, 3, 4, 5, 6
@@ -522,7 +522,7 @@ SELECT
     season_year,
     LOWER(COALESCE(venue_name, '')) as venue,
     day_of_week,
-    LOWER(COALESCE(competition_level, '')) as level,
+    LOWER(COALESCE(source_comp_level, '')) as level,
     COUNT(*) as duplicates,
     array_agg(league_id) as league_ids,
     array_agg(quality_score) as scores

@@ -23,6 +23,19 @@ CACHE_DIR = Path(__file__).parent.parent.parent / "scrapes"
 CACHE_TTL_DAYS = 7
 
 # JavaScript to extract accessibility tree from page
+# Rate-limit / block detection
+_RATE_LIMIT_SIGNALS = [
+    "rate limit",
+    "too many requests",
+    "access denied",
+    "403 forbidden",
+    "please try again later",
+    "you have been blocked",
+    "request blocked",
+]
+_MAX_RETRIES = 3
+_RETRY_BASE_DELAY = 10  # seconds; doubles each retry (10, 20, 40)
+
 EXTRACT_ACCESSIBILITY_TREE_JS = """
 (function getAccessibilityTree(element = document.documentElement) {
     const role = element.getAttribute('role') ||
@@ -208,101 +221,143 @@ def fetch_page_as_yaml(
         "cached": False,
     }
 
-    try:
-        full_text = ""
-        with sync_playwright() as p:
-            # Launch browser
-            logger.info("Launching browser...")
-            browser = p.chromium.launch(
-                headless=True,
-                args=["--disable-blink-features=AutomationControlled"],
-            )
-            context = browser.new_context(
-                ignore_https_errors=True,
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            )
-            page = context.new_page()
+    last_error = None
+    for attempt in range(_MAX_RETRIES):
+        try:
+            full_text = ""
+            with sync_playwright() as p:
+                # Launch browser
+                logger.info("Launching browser...")
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=["--disable-blink-features=AutomationControlled"],
+                )
+                context = browser.new_context(
+                    ignore_https_errors=True,
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                )
+                page = context.new_page()
 
-            # Navigate to URL — try networkidle first, fall back to load for
-            # sites with persistent polling/analytics that never go quiet.
-            logger.info(f"Opening: {url}")
-            try:
-                page.goto(url, wait_until="networkidle", timeout=wait_time * 1000)
-            except Exception:
-                logger.info("networkidle timed out, retrying with wait_until='load'")
-                page.goto(url, wait_until="load", timeout=wait_time * 1000)
+                # Navigate to URL — try networkidle first, fall back to load for
+                # sites with persistent polling/analytics that never go quiet.
+                logger.info(f"Opening: {url}")
+                response = None
+                try:
+                    response = page.goto(url, wait_until="networkidle", timeout=wait_time * 1000)
+                except Exception:
+                    logger.info("networkidle timed out, retrying with wait_until='load'")
+                    response = page.goto(url, wait_until="load", timeout=wait_time * 1000)
 
-            # Detect and wait for Cloudflare challenge to resolve
-            for attempt in range(6):  # up to ~15s
-                title = page.title() or ""
-                if "just a moment" not in title.lower():
-                    break
-                logger.info(f"Cloudflare challenge detected, waiting... (attempt {attempt + 1})")
-                page.wait_for_timeout(2500)
+                # Check HTTP status for rate limiting (429, 403)
+                http_status = response.status if response else 0
+                if http_status in (429, 403):
+                    delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                    logger.warning(
+                        f"HTTP {http_status} on {url} — rate limited, "
+                        f"retrying in {delay}s (attempt {attempt + 1}/{_MAX_RETRIES})"
+                    )
+                    page.close()
+                    context.close()
+                    browser.close()
+                    time.sleep(delay)
+                    continue
 
-            # Extra wait for SPAs that render data after initial load
-            page.wait_for_timeout(3000)
+                # Detect and wait for Cloudflare challenge to resolve
+                for cf_attempt in range(6):  # up to ~15s
+                    title = page.title() or ""
+                    if "just a moment" not in title.lower():
+                        break
+                    logger.info(f"Cloudflare challenge detected, waiting... (attempt {cf_attempt + 1})")
+                    page.wait_for_timeout(2500)
 
-            # Try to click sports-relevant tabs before capturing —
-            # e.g. GameSheet defaults to Schedule (shows "no matching games" for
-            # today's date), but Standings always shows teams regardless of date.
-            _click_best_sports_tab(page)
+                # Extra wait for SPAs that render data after initial load
+                page.wait_for_timeout(3000)
 
-            # Extract accessibility tree using JavaScript
-            logger.info("Extracting accessibility tree...")
-            accessibility_tree = page.evaluate(EXTRACT_ACCESSIBILITY_TREE_JS)
+                # Try to click sports-relevant tabs before capturing —
+                # e.g. GameSheet defaults to Schedule (shows "no matching games" for
+                # today's date), but Standings always shows teams regardless of date.
+                _click_best_sports_tab(page)
 
-            # Capture full rendered text for Tier-2 extraction
-            # MUST be before page.close()
-            try:
-                full_text = page.inner_text("body") or ""
-                if max_full_text_chars and len(full_text) > max_full_text_chars:
-                    full_text = full_text[:max_full_text_chars]
-            except Exception:
-                full_text = ""
+                # Extract accessibility tree using JavaScript
+                logger.info("Extracting accessibility tree...")
+                accessibility_tree = page.evaluate(EXTRACT_ACCESSIBILITY_TREE_JS)
 
-            # Also extract content from child iframes (e.g. GameSheet embeds).
-            # page.evaluate() only sees the outer document; iframe documents are
-            # separate browsing contexts that must be accessed via page.frames.
-            iframe_yamls = _extract_iframe_yamls(page)
+                # Capture full rendered text for Tier-2 extraction
+                # MUST be before page.close()
+                try:
+                    full_text = page.inner_text("body") or ""
+                    if max_full_text_chars and len(full_text) > max_full_text_chars:
+                        full_text = full_text[:max_full_text_chars]
+                except Exception:
+                    full_text = ""
 
-            # Close browser
-            page.close()
-            context.close()
-            browser.close()
+                # --- Rate limit / block detection on page content ---
+                body_lower = full_text.lower() if full_text else ""
+                tree_name = ""
+                if isinstance(accessibility_tree, dict):
+                    tree_name = (accessibility_tree.get("name") or "").lower()
+                check_text = body_lower + " " + tree_name
+                if any(signal in check_text for signal in _RATE_LIMIT_SIGNALS):
+                    delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                    logger.warning(
+                        f"Rate limit/block detected in page content for {url} — "
+                        f"retrying in {delay}s (attempt {attempt + 1}/{_MAX_RETRIES})"
+                    )
+                    page.close()
+                    context.close()
+                    browser.close()
+                    time.sleep(delay)
+                    continue
 
-            # Convert main page to YAML
-            yaml_content = yaml.dump(
-                accessibility_tree,
-                default_flow_style=False,
-                sort_keys=False,
-                allow_unicode=True,
-                width=120,
-            )
+                # Also extract content from child iframes (e.g. GameSheet embeds).
+                # page.evaluate() only sees the outer document; iframe documents are
+                # separate browsing contexts that must be accessed via page.frames.
+                iframe_yamls = _extract_iframe_yamls(page)
 
-            # Append iframe sections (each labelled so the LLM can see them)
-            for i, iframe_yaml in enumerate(iframe_yamls):
-                yaml_content += f"\n# --- IFRAME {i} ---\n{iframe_yaml}"
+                # Close browser
+                page.close()
+                context.close()
+                browser.close()
 
-            # Calculate metrics
-            yaml_bytes = len(yaml_content.encode("utf-8"))
-            enc = tiktoken.get_encoding("cl100k_base")
-            tokens = len(enc.encode(yaml_content))
+                # Convert main page to YAML
+                yaml_content = yaml.dump(
+                    accessibility_tree,
+                    default_flow_style=False,
+                    sort_keys=False,
+                    allow_unicode=True,
+                    width=120,
+                )
 
-            metadata["yaml_size_bytes"] = yaml_bytes
-            metadata["token_estimate"] = tokens
-            metadata["full_text"] = full_text
+                # Append iframe sections (each labelled so the LLM can see them)
+                for i, iframe_yaml in enumerate(iframe_yamls):
+                    yaml_content += f"\n# --- IFRAME {i} ---\n{iframe_yaml}"
 
-            logger.info(f"Success: {yaml_bytes:,} bytes, ~{tokens:,} tokens")
+                # Calculate metrics
+                yaml_bytes = len(yaml_content.encode("utf-8"))
+                enc = tiktoken.get_encoding("cl100k_base")
+                tokens = len(enc.encode(yaml_content))
 
-            # Cache the result
-            save_yaml_to_cache(url, yaml_content, metadata)
+                metadata["yaml_size_bytes"] = yaml_bytes
+                metadata["token_estimate"] = tokens
+                metadata["full_text"] = full_text
 
-            return yaml_content, metadata
+                logger.info(f"Success: {yaml_bytes:,} bytes, ~{tokens:,} tokens")
 
-    except Exception as e:
-        logger.error(f"Failed to fetch YAML: {url}", exc_info=True)
-        raise
+                # Cache the result
+                save_yaml_to_cache(url, yaml_content, metadata)
+
+                return yaml_content, metadata
+
+        except Exception as e:
+            last_error = e
+            logger.error(f"Failed to fetch YAML (attempt {attempt + 1}/{_MAX_RETRIES}): {url}", exc_info=True)
+            if attempt < _MAX_RETRIES - 1:
+                delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                logger.info(f"Retrying in {delay}s...")
+                time.sleep(delay)
+
+    # All retries exhausted
+    raise last_error or RuntimeError(f"Failed to fetch {url} after {_MAX_RETRIES} attempts")
 
 
 def save_yaml_to_cache(url: str, yaml_content: str, metadata: dict) -> Path:

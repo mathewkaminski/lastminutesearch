@@ -79,14 +79,56 @@ def parse_yaml_links(yaml_tree, base_url: str = "") -> List[DiscoveredLink]:
     """
     links = []
 
-    def traverse(node):
+    # Generic anchor texts that should be enriched with sibling/parent context
+    _GENERIC_ANCHORS = {
+        "learn more", "learn more!", "click here", "read more", "read more!",
+        "view details", "view more", "more info", "more information",
+        "find out more", "find out more!", "details", "see more",
+        "apply now", "apply now!", "sign up", "sign up!",
+    }
+
+    def _find_heading_in_siblings(children: list, skip_index: int) -> str:
+        """Look at sibling nodes for heading/label text to enrich a generic link."""
+        # Pass 1: prefer headings (h1-h6)
+        for i, sibling in enumerate(children):
+            if i == skip_index or not isinstance(sibling, dict):
+                continue
+            role = sibling.get("role", "")
+            name = (sibling.get("name") or "").strip()
+            if role in ("h1", "h2", "h3", "h4", "h5", "h6") and name:
+                return name
+        # Pass 2: any sibling with a short, meaningful name
+        for i, sibling in enumerate(children):
+            if i == skip_index or not isinstance(sibling, dict):
+                continue
+            name = (sibling.get("name") or "").strip()
+            if name and 3 < len(name) < 60 and name.lower() not in _GENERIC_ANCHORS:
+                return name
+        return ""
+
+    def _find_context_from_ancestors(ancestors: list) -> str:
+        """Walk up the ancestor chain to find heading/label context.
+
+        ancestors is a list of (children, index) tuples from nearest to farthest.
+        Checks siblings at each level, up to 3 levels.
+        """
+        for children, idx in ancestors[:3]:
+            context = _find_heading_in_siblings(children, idx)
+            if context:
+                return context
+        return ""
+
+    def traverse(node, ancestors=None):
         """Recursively traverse YAML tree to find elements with role='a'."""
+        if ancestors is None:
+            ancestors = []
+
         if not isinstance(node, (dict, list)):
             return
 
         if isinstance(node, list):
-            for item in node:
-                traverse(item)
+            for i, item in enumerate(node):
+                traverse(item, ancestors=[(node, i)] + ancestors)
         elif isinstance(node, dict):
             # Check if this node is a link element (role='a' or role='link')
             if node.get("role") in ("a", "link"):
@@ -102,6 +144,12 @@ def parse_yaml_links(yaml_tree, base_url: str = "") -> List[DiscoveredLink]:
                     else:
                         full_url = link_url
 
+                    # Enrich generic anchor text with ancestor context
+                    if anchor_text.lower() in _GENERIC_ANCHORS and ancestors:
+                        context = _find_context_from_ancestors(ancestors)
+                        if context:
+                            anchor_text = f"{context} - {anchor_text}"
+
                     # Only include if we have both URL and text
                     if full_url and anchor_text:
                         link = DiscoveredLink(
@@ -113,9 +161,10 @@ def parse_yaml_links(yaml_tree, base_url: str = "") -> List[DiscoveredLink]:
                         links.append(link)
 
             # Recursively search children
-            for key, value in node.items():
-                if key == "children" and isinstance(value, list):
-                    traverse(value)
+            children = node.get("children")
+            if isinstance(children, list):
+                for i, child in enumerate(children):
+                    traverse(child, ancestors=[(children, i)] + ancestors)
 
     traverse(yaml_tree)
     return links

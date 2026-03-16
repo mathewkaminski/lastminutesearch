@@ -122,20 +122,20 @@ def _click_best_sports_tab(page) -> None:
         pass
 
 
-def _extract_iframe_yamls(page) -> list[str]:
-    """Extract accessibility tree YAML from child iframes.
+def _extract_iframe_trees(page) -> list[dict]:
+    """Extract accessibility trees from child iframes.
 
     Widgets like GameSheet are embedded via iframe. The outer page's
     document.documentElement does NOT include iframe content.
     This function iterates page.frames (skipping the main frame), clicks
-    the best sports tab inside each frame, and returns YAML for frames
-    that contain meaningful content.
+    the best sports tab inside each frame, and returns tree dicts for frames
+    that contain meaningful, non-rate-limited content.
 
     Args:
         page: Playwright sync Page object (browser must still be open)
 
     Returns:
-        List of YAML strings, one per non-empty child frame.
+        List of accessibility tree dicts, one per non-empty child frame.
     """
     results = []
     try:
@@ -157,6 +157,15 @@ def _extract_iframe_yamls(page) -> list[str]:
 
             # Extract accessibility tree from this frame's document
             tree = frame.evaluate(EXTRACT_ACCESSIBILITY_TREE_JS)
+            if not isinstance(tree, dict):
+                continue
+
+            # Skip rate-limited / blocked iframe content
+            tree_name = (tree.get("name") or "").lower()
+            if any(signal in tree_name for signal in _RATE_LIMIT_SIGNALS):
+                logger.info(f"  iframe skipped (rate limited): {frame_url}")
+                continue
+
             frame_yaml = yaml.dump(
                 tree,
                 default_flow_style=False,
@@ -168,7 +177,8 @@ def _extract_iframe_yamls(page) -> list[str]:
             # Only include frames that have non-trivial content
             if len(frame_yaml.strip()) > 100:
                 logger.info(f"  iframe YAML: {len(frame_yaml):,} bytes")
-                results.append(frame_yaml)
+                tree["_iframe_src"] = frame_url
+                results.append(tree)
 
         except Exception as e:
             logger.debug(f"  iframe skipped ({frame_url}): {e}")
@@ -312,14 +322,25 @@ def fetch_page_as_yaml(
                 # Also extract content from child iframes (e.g. GameSheet embeds).
                 # page.evaluate() only sees the outer document; iframe documents are
                 # separate browsing contexts that must be accessed via page.frames.
-                iframe_yamls = _extract_iframe_yamls(page)
+                iframe_trees = _extract_iframe_trees(page)
 
                 # Close browser
                 page.close()
                 context.close()
                 browser.close()
 
-                # Convert main page to YAML
+                # Nest iframe trees under the main tree so yaml.safe_load
+                # always returns a single document (avoids multi-doc corruption).
+                if iframe_trees and isinstance(accessibility_tree, dict):
+                    children = accessibility_tree.setdefault("children", [])
+                    for iframe_tree in iframe_trees:
+                        children.append({
+                            "role": "iframe",
+                            "name": iframe_tree.get("_iframe_src", "iframe"),
+                            "children": iframe_tree.get("children", []),
+                        })
+
+                # Convert to YAML (single document)
                 yaml_content = yaml.dump(
                     accessibility_tree,
                     default_flow_style=False,
@@ -327,10 +348,6 @@ def fetch_page_as_yaml(
                     allow_unicode=True,
                     width=120,
                 )
-
-                # Append iframe sections (each labelled so the LLM can see them)
-                for i, iframe_yaml in enumerate(iframe_yamls):
-                    yaml_content += f"\n# --- IFRAME {i} ---\n{iframe_yaml}"
 
                 # Calculate metrics
                 yaml_bytes = len(yaml_content.encode("utf-8"))

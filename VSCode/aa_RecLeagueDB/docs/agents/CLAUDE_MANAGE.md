@@ -386,19 +386,19 @@ def infer_season_year(start_date: date, end_date: date) -> int:
 
 ## Validation Commands
 
-### Run Full Validation
+### Run Extraction Tests
 ```bash
-python scripts/test_full_pipeline.py --validate
+pytest tests/test_yaml_extractor.py tests/test_validators.py -v
 ```
 
-### Get JSON Coverage Report
+### Run Quality / Enrichment Tests
 ```bash
-python scripts/test_full_pipeline.py --validate --json | python -m json.tool
+pytest tests/test_quality_thresholds.py tests/test_consolidator.py tests/test_field_enricher.py -v
 ```
 
-### Check Specific League
+### Check a Specific URL via CLI
 ```bash
-python scripts/test_single_url.py <league_id> --validate-only
+python scripts/smart_scraper.py --url <url> --dry-run
 ```
 
 ---
@@ -447,7 +447,7 @@ VACUUM ANALYZE league_vectors;
 
 ## Streamlit Data Management Pages
 
-Three pages in `streamlit_app/pages/` serve this context. All read/write `leagues_metadata` via Supabase.
+Five pages in `streamlit_app/pages/` serve this context. All read/write `leagues_metadata` via Supabase.
 
 ### 1. leagues_viewer.py — Browse & Filter Leagues
 
@@ -505,12 +505,12 @@ ORDER BY quality_score ASC;
 
 **Purpose:** Identify suspected duplicate leagues and resolve them (keep/merge/delete).
 
-**Features to build:**
-- Run dedup query to surface suspected duplicates (same org + sport + year + venue + day + level)
-- Side-by-side comparison of duplicate pair: all fields, quality scores, source URLs
+**Features:**
+- Runs dedup query to surface suspected duplicates (same org + sport + year + venue + day + level)
+- Side-by-side comparison of duplicate pairs: all fields, quality scores, source URLs
 - Actions per pair:
-  - **Keep both** — they're legitimately different (add a note why)
-  - **Merge** — keep higher quality_score record, copy any non-null fields from the other, archive the duplicate
+  - **Keep both** — they're legitimately different
+  - **Merge** — keep higher quality_score record, copy non-null fields from the other, archive duplicate
   - **Delete** — remove clearly erroneous record
 - Audit log: every merge/delete action logged with timestamp and rationale
 
@@ -542,6 +542,27 @@ ORDER BY duplicates DESC;
 **Key modules:** `src/enrichers/venue_enricher.py`, `src/enrichers/places_client.py`, `src/database/venue_store.py`
 
 **New env var required:** `GOOGLE_PLACES_API_KEY`
+
+---
+
+### 5. fill_in_leagues.py — Multi-Mode League Enrichment
+
+**Purpose:** Enrich existing league records in three modes selectable per URL batch.
+
+**Modes:**
+- **Fill Fields** — `FieldEnricher.enrich_url()` runs snapshot → mini-crawl → Firecrawl cascade to fill null fields
+- **Teams** — `LeagueChecker._standard_check()` navigates standings pages to populate `num_teams`; auto-triggers `super_scraper.run()` when `quality_score < 75`
+- **Deep-dive** — Runs `scripts/super_scraper.py` full re-crawl + reconciliation against existing records
+
+**Key modules:**
+| Module | Purpose |
+|--------|---------|
+| `src/enrichers/field_enricher.py` | Fill Fields backend — orchestrates snapshot → mini-crawl → Firecrawl cascade |
+| `src/checkers/league_checker.py` | Teams mode backend — `_standard_check()` + super scraper trigger |
+| `src/checkers/team_count_extractor.py` | Extracts team counts from standings/schedule pages |
+| `src/checkers/playwright_navigator.py` | Playwright navigation for checker flows |
+| `src/enrichers/confidence_scorer.py` | Scores enrichment confidence for each field |
+| `scripts/super_scraper.py` | Deep-dive backend |
 
 ---
 

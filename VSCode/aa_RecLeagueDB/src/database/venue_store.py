@@ -1,9 +1,14 @@
 """Venue table read/write operations."""
 
 import logging
+import re
 from datetime import datetime, timezone
 
 from src.config.sss_codes import SPORT_CODES
+
+_PROVINCE_RE = re.compile(
+    r",\s*(AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)\s+"
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +33,17 @@ class VenueStore:
         confidence_score: int,
         raw_api_response: dict,
     ) -> str:
-        """Upsert a venue record. Returns venue_id."""
+        """Insert or update a venue record. Returns venue_id.
+
+        Looks up by (venue_name, city) first to avoid hitting the
+        idx_venues_name_city unique constraint when re-enriching unlinked venues
+        that already have a row (e.g. previously queued for review).
+        """
+        province = self._extract_province(address)
         data = {
             "venue_name": venue_name,
             "city": city,
+            "province": province,
             "address": address,
             "lat": lat,
             "lng": lng,
@@ -40,12 +52,31 @@ class VenueStore:
             "raw_api_response": raw_api_response,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
-        result = (
+
+        existing = (
             self.client.table("venues")
-            .upsert(data, on_conflict="google_place_id")
+            .select("venue_id")
+            .ilike("venue_name", venue_name)
+            .ilike("city", city)
+            .limit(1)
             .execute()
         )
+
+        if existing.data:
+            venue_id = existing.data[0]["venue_id"]
+            self.client.table("venues").update(data).eq("venue_id", venue_id).execute()
+            return venue_id
+
+        result = self.client.table("venues").insert(data).execute()
         return result.data[0]["venue_id"]
+
+    @staticmethod
+    def _extract_province(address: str | None) -> str | None:
+        """Extract 2-letter Canadian province code from a formatted address."""
+        if not address:
+            return None
+        m = _PROVINCE_RE.search(address)
+        return m.group(1) if m else None
 
     def link_leagues(self, venue_id: str, venue_name: str, city: str) -> int:
         """Set venue_id on all leagues with matching venue_name + city.

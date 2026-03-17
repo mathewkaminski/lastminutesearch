@@ -9,6 +9,7 @@ from src.checkers.team_count_extractor import TeamCountExtractor, TeamExtraction
 from src.checkers.playwright_navigator import PlaywrightNavigator, NavigatedPage
 from src.database.check_store import CheckStore
 from src.database.supabase_client import get_client
+from src.database.leagues_reader import update_num_teams
 from src.config.quality_thresholds import DEEP_SCRAPE_THRESHOLD
 
 
@@ -80,8 +81,16 @@ class LeagueChecker:
             return self._standard_check(url, db_leagues, progress_callback)
 
     def _standard_check(self, url: str, db_leagues: list[dict], progress_callback=None) -> CheckRunResult:
-        """Sync wrapper — runs the standard async check."""
-        return asyncio.run(self._standard_check_async(url, db_leagues, progress_callback))
+        """Sync wrapper — runs the standard async check, then writes back confirmed changes."""
+        result = asyncio.run(self._standard_check_async(url, db_leagues, progress_callback))
+        for chk in result.checks:
+            if (
+                chk.get("status") == "CHANGED"
+                and chk.get("league_id")
+                and chk.get("new_num_teams")
+            ):
+                update_num_teams(chk["league_id"], chk["new_num_teams"])
+        return result
 
     def _super_check(self, url: str, db_leagues: list[dict], progress_callback=None) -> CheckRunResult:
         """Run super scraper (deep crawl + team count pass) for low-quality records."""

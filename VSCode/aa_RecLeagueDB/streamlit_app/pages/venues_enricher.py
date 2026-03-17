@@ -1,6 +1,7 @@
-"""Venues Enricher — trigger enrichment and review low-confidence results."""
+"""Venues Enricher — trigger enrichment and review/edit venue records."""
 
 import os
+import pandas as pd
 import streamlit as st
 from src.database.supabase_client import get_client
 from src.database.venue_store import VenueStore
@@ -66,47 +67,50 @@ def render():
             )
             st.rerun()
 
-    # ── Review queue ─────────────────────────────────────────────
-    st.subheader("Review Queue")
-    queue = store.get_review_queue()
+    # ── Venues table ─────────────────────────────────────────────
+    st.subheader("All Venues")
+    venues = store.get_all_venues()
 
-    if not queue:
-        st.write("No items to review.")
+    if not venues:
+        st.write("No venues yet.")
         return
 
-    for venue in queue:
-        conf = venue.get("confidence_score", 0)
-        label = f"**{venue['venue_name']}**, {venue.get('city', '?')} — confidence: {conf}/100"
+    df = pd.DataFrame(venues)
 
-        with st.expander(label):
-            st.write(f"**Returned address:** {venue.get('address', 'N/A')}")
-            if venue.get("lat") and venue.get("lng"):
-                maps_url = (
-                    f"https://www.google.com/maps/search/?api=1"
-                    f"&query={venue['lat']},{venue['lng']}"
-                )
-                st.markdown(f"[Open in Google Maps ↗]({maps_url})")
-            st.write(f"**Google Place ID:** {venue.get('google_place_id', 'N/A')}")
+    # Convert list columns to comma-separated strings for display
+    for col in ("sports", "days_of_week"):
+        if col in df.columns:
+            df[col] = df[col].apply(
+                lambda v: ", ".join(v) if isinstance(v, list) else (v or "")
+            )
 
-            col_a, col_b, col_c = st.columns(3)
+    edited = st.data_editor(
+        df,
+        column_config={
+            "venue_id": None,  # hidden — used for save logic only
+            "venue_name": st.column_config.TextColumn("Scraped Name", disabled=True),
+            "google_name": st.column_config.TextColumn("Google Name", width="medium"),
+            "city": st.column_config.TextColumn("City", disabled=True, width="small"),
+            "province": st.column_config.TextColumn("Prov.", disabled=True, width="small"),
+            "address": st.column_config.TextColumn("Address", disabled=True, width="large"),
+            "confidence_score": st.column_config.NumberColumn("Conf.", disabled=True, width="small"),
+            "manually_verified": st.column_config.CheckboxColumn("Verified", disabled=True, width="small"),
+            "sports": st.column_config.TextColumn("Sports", disabled=True, width="medium"),
+            "days_of_week": st.column_config.TextColumn("Days", disabled=True, width="medium"),
+        },
+        hide_index=True,
+        use_container_width=True,
+        key="venues_table",
+    )
 
-            with col_a:
-                if st.button("✓ Accept", key=f"accept_{venue['venue_id']}"):
-                    store.accept_venue(venue["venue_id"])
-                    store.link_leagues(venue["venue_id"], venue["venue_name"], venue.get("city", ""))
-                    st.rerun()
-
-            with col_b:
-                new_address = st.text_input(
-                    "Corrected address",
-                    value=venue.get("address", ""),
-                    key=f"edit_{venue['venue_id']}",
-                )
-                if st.button("💾 Save edit", key=f"save_{venue['venue_id']}"):
-                    store.update_venue_address(venue["venue_id"], new_address, None, None)
-                    store.link_leagues(venue["venue_id"], venue["venue_name"], venue.get("city", ""))
-                    st.rerun()
-
-            with col_c:
-                if st.button("⏭ Skip", key=f"skip_{venue['venue_id']}"):
-                    st.rerun()
+    if st.button("💾 Save Name Changes"):
+        orig = df.set_index("venue_id")["google_name"]
+        updated = edited.set_index("venue_id")["google_name"]
+        changed = orig[orig != updated].index.tolist()
+        if changed:
+            for vid in changed:
+                store.update_google_name(vid, updated[vid] or None)
+            st.success(f"Saved {len(changed)} name change(s).")
+            st.rerun()
+        else:
+            st.info("No changes detected.")

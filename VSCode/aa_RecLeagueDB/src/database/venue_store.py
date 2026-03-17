@@ -176,6 +176,20 @@ class VenueStore:
             "needs_review": review_queue,
         }
 
+    def get_all_venues(self) -> list[dict]:
+        """Return all venues ordered by city then venue_name."""
+        result = (
+            self.client.table("venues")
+            .select(
+                "venue_id, venue_name, google_name, city, province, address, "
+                "confidence_score, manually_verified, sports, days_of_week"
+            )
+            .order("city")
+            .order("venue_name")
+            .execute()
+        )
+        return result.data
+
     def get_review_queue(self, limit: int = 50) -> list[dict]:
         """Return venues needing human review (low confidence, not verified)."""
         result = (
@@ -188,6 +202,13 @@ class VenueStore:
             .execute()
         )
         return result.data
+
+    def update_google_name(self, venue_id: str, google_name: str | None) -> None:
+        """Update the display label for a venue."""
+        self.client.table("venues").update({
+            "google_name": google_name,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("venue_id", venue_id).execute()
 
     def accept_venue(self, venue_id: str) -> None:
         """Mark a venue as manually verified."""

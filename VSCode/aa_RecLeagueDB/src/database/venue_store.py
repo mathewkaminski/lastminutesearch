@@ -67,6 +67,20 @@ class VenueStore:
             self.client.table("venues").update(data).eq("venue_id", venue_id).execute()
             return venue_id
 
+        # Fallback: same google_place_id under a different name/city spelling
+        if google_place_id:
+            by_place = (
+                self.client.table("venues")
+                .select("venue_id")
+                .eq("google_place_id", google_place_id)
+                .limit(1)
+                .execute()
+            )
+            if by_place.data:
+                venue_id = by_place.data[0]["venue_id"]
+                self.client.table("venues").update(data).eq("venue_id", venue_id).execute()
+                return venue_id
+
         result = self.client.table("venues").insert(data).execute()
         return result.data[0]["venue_id"]
 

@@ -276,3 +276,4 @@ def update_num_teams(league_id: str, num_teams: int) -> None:
         "num_teams": num_teams,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }).eq("league_id", league_id).execute()
+    logger.info("Updated num_teams for league %s → %d", league_id, num_teams)

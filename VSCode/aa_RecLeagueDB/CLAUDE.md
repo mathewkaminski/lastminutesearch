@@ -12,10 +12,10 @@
 | **URL Discovery** | [CLAUDE_SEARCH.md](docs/agents/CLAUDE_SEARCH.md) | Campaign Manager, Queue Monitor |
 | **Scraping & Extraction** | [CLAUDE_EXTRACT.md](docs/agents/CLAUDE_EXTRACT.md) | Queue Monitor (run scraper), Scraper UI (in progress) |
 | **Data Cleaning & Validation** | [CLAUDE_MANAGE.md](docs/agents/CLAUDE_MANAGE.md) | Leagues Viewer, Data Quality, URL Merge, League Merge, Org View |
-| **Enrichment** | [CLAUDE_MANAGE.md](docs/agents/CLAUDE_MANAGE.md) | Venues Enricher, League Checker |
+| **Enrichment** | [CLAUDE_MANAGE.md](docs/agents/CLAUDE_MANAGE.md) | Fill In Leagues, Venues Enricher |
 | **Analytics & Queries** | [CLAUDE_QUERY.md](docs/agents/CLAUDE_QUERY.md) | (future) |
 
-**Current Focus:** `CLAUDE_EXTRACT.md` (scraper UI) + `CLAUDE_MANAGE.md` (data management tools)
+**Current Focus:** `CLAUDE_EXTRACT.md` (crawler guardrails, parent-child merge) + `CLAUDE_MANAGE.md` (tiered quality gate)
 
 **Future Work:** [Parking_Lot.md](Parking_Lot.md)
 
@@ -37,8 +37,9 @@
 |-------|-----------|
 | Language | Python 3.10+ |
 | Database | Supabase (PostgreSQL + pgvector) |
-| Scraping L0 | Playwright MCP Agent (`scripts/mcp_agent_scraper.py`) — manual/complex sites |
-| Scraping L1 | Playwright YAML pipeline (`scripts/extract_leagues_yaml.py`) — automated bulk |
+| Scraping L1 | `scripts/smart_scraper.py` — primary pipeline (BFS + 5-way classifier + GPT-4o) |
+| Scraping L1.5 | `scripts/super_scraper.py` — deep crawl + team count, auto-triggered for low quality |
+| Scraping L0 | `scripts/mcp_agent_scraper.py` — manual/complex sites (legacy fallback) |
 | Scraping L2 | Firecrawl API — paid fallback only |
 | LLM | OpenAI GPT-4o (extraction + enrichment) |
 | Embeddings | OpenAI text-embedding-3-small (1536d) |
@@ -68,11 +69,14 @@ aa_RecLeagueDB/
 │
 ├── src/
 │   ├── search/                  # URL discovery & queue management
-│   ├── scraper/                 # Web scraping (YAML/MCP stack)
+│   ├── scraper/                 # Web scraping (YAML/smart crawler stack)
 │   ├── extractors/              # LLM-based data extraction
 │   ├── database/                # Supabase client & validators
+│   ├── enrichers/               # Field enrichment, venue lookup, confidence scoring
+│   ├── checkers/                # League checker, team count extraction, Playwright navigator
 │   ├── analytics/               # Analysis modules (future)
-│   ├── config/                  # SSS codes, search filters
+│   ├── config/                  # SSS codes, search filters, quality thresholds
+│   ├── agents/                  # Agent modules (future)
 │   └── utils/
 │
 ├── streamlit_app/
@@ -80,19 +84,26 @@ aa_RecLeagueDB/
 │   └── pages/
 │       ├── campaign_manager.py      # Search: city + sport → run Serper, queue URLs
 │       ├── queue_monitor.py         # Search/Scrape: browse queue, bulk-update, run scraper, screen URLs
-│       ├── scraper_ui.py            # Scrape: select URLs to scrape (not yet built)
-│       ├── league_checker.py        # Enrich: re-scrape URLs to verify team counts
+│       ├── scraper_ui.py            # Scrape: view source YAML, re-scrape with Firecrawl, extract leagues
+│       ├── fill_in_leagues.py       # Enrich: multi-mode enrichment (Fill Fields / Teams / Deep-dive)
 │       ├── leagues_viewer.py        # Manage: browse/filter leagues_metadata, export CSV
 │       ├── data_quality.py          # Manage: quality score distribution, field coverage
 │       ├── url_merge.py             # Manage: dedup within a single url_scraped
 │       ├── league_merge.py          # Manage: cross-URL dedup using 6-field identity model
+│       ├── merge_tool.py            # Manage: surface and resolve suspected duplicate league records
 │       ├── venues_enricher.py       # Enrich: resolve venue names via Google Places API
 │       └── org_view.py              # Manage: browse leagues grouped by base_domain, set listing_type
 │
 ├── scripts/
-│   ├── mcp_agent_scraper.py     # L0: MCP agent (manual)
-│   ├── extract_leagues_yaml.py  # L1: Automated YAML pipeline
-│   └── yaml_snapshot_cli.py
+│   ├── smart_scraper.py         # L1 primary: BFS Playwright + Haiku classifier + GPT-4o extraction
+│   ├── super_scraper.py         # L1.5: Two-pass deep crawl + team count + reconciliation
+│   ├── extract_pipeline.py      # Orchestrator: ties all pipeline phases together
+│   ├── extract_leagues_yaml.py  # Legacy L1: Automated YAML pipeline (bulk)
+│   ├── mcp_agent_scraper.py     # L0: MCP agent (manual/complex sites, legacy)
+│   ├── count_teams_scraper.py   # Standalone team count scraper
+│   ├── backfill_city.py         # Maintenance: backfill city field
+│   ├── backfill_listing_type.py # Maintenance: backfill listing_type field
+│   └── yaml_snapshot_cli.py     # CLI: inspect YAML snapshots
 │
 ├── tests/                       # All test files
 ├── migrations/                  # SQL migration files
@@ -107,7 +118,7 @@ aa_RecLeagueDB/
 1. **Two-tool extraction:** Tool 1 = core metadata, Tool 2 = team count enrichment (optional post-ingestion)
 2. **Bifurcated DB:** SQL (`leagues_metadata`) for structured data, pgvector (`league_vectors`) for RAG
 3. **SSS codes:** 3-digit sport/season format XYY — full reference in [docs/SSS_CODES.md](docs/SSS_CODES.md)
-4. **Scraping cascade:** L0 MCP agent → L1 YAML pipeline → L2 Firecrawl (paid, last resort)
+4. **Scraping cascade:** L1 `smart_scraper.py` (primary, 5-way BFS decision matrix) → L1.5 `super_scraper.py` (auto-triggered for quality_score < 75) → L0 `mcp_agent_scraper.py` (manual/complex) → L2 Firecrawl (paid, last resort). Core routing lives in `src/scraper/smart_crawler.py`.
 5. **Full schema + UUID model:** [docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md)
 
 ---

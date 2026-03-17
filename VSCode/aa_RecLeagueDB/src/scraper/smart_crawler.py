@@ -13,18 +13,18 @@ Navigation algorithm:
               OTHER (score < 100)      → skip
 
 Decision matrix (used in both _follow_index_links and Step A):
-  | Classification | score >= 100       | score < 100           |
-  |----------------|--------------------|-----------------------|
-  | LEAGUE_INDEX   | collect + recurse  | collect + recurse     |
-  | LEAGUE_DETAIL  | collect + recurse  | collect (no recurse)  |
-  | SCHEDULE       | store scrape_detail| store scrape_detail   |
-  | MEDIUM_DETAIL  | store scrape_detail| store scrape_detail   |
-  | OTHER          | collect + recurse  | skip                  |
+  | Classification | score >= 100       | 50 <= score < 100     | score < 50  |
+  |----------------|--------------------|-----------------------|-------------|
+  | LEAGUE_INDEX   | collect + recurse  | collect + recurse     | skip        |
+  | LEAGUE_DETAIL  | collect + recurse  | collect (no recurse)  | skip        |
+  | SCHEDULE       | store scrape_detail| store scrape_detail   | skip        |
+  | MEDIUM_DETAIL  | store scrape_detail| store scrape_detail   | skip        |
+  | OTHER          | collect + recurse  | skip                  | skip        |
 """
 
 import logging
 import yaml as yaml_lib
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from src.scraper.playwright_yaml_fetcher import fetch_page_as_yaml
 from src.scraper.yaml_link_parser import parse_yaml_links, score_links, infer_link_category, extract_navigation_links
@@ -123,6 +123,7 @@ def _follow_index_links(
     use_cache: bool = True,
     force_refresh: bool = False,
     parent_map: dict = None,
+    home_link_urls: set = None,
 ) -> None:
     """Fetch and classify internal links found on a LEAGUE_INDEX or LEAGUE_DETAIL page.
 
@@ -139,6 +140,7 @@ def _follow_index_links(
         use_cache: Whether to use the page cache
         force_refresh: If True, bypass cache and re-fetch all pages
         parent_map: Dict mapping child_url → parent_url (mutated in-place)
+        home_link_urls: Set of normalized URLs from the start page (skip these on subpages)
     """
     try:
         tree = yaml_lib.safe_load(index_yaml)
@@ -160,6 +162,9 @@ def _follow_index_links(
             continue
         if not _same_domain(normalized, base_url):
             continue
+        # Skip links already identified as site-wide nav (handled by Step A)
+        if home_link_urls and normalized in home_link_urls:
+            continue
         seen_candidates.add(normalized)
         link.url = normalized  # fetch the clean URL
         candidates.append(link)
@@ -169,6 +174,10 @@ def _follow_index_links(
     # Score candidates before fetching so we can use score in the decision matrix
     candidates = score_links(candidates)
 
+    # Skip negatively-scored candidates (penalized by negative keywords like
+    # "swim", "children", "fitness") — don't even fetch/classify them
+    candidates = [link for link in candidates if link.score >= 0]
+
     for link in candidates:
         visited.add(link.url)  # already normalized above
         try:
@@ -177,7 +186,10 @@ def _follow_index_links(
             full_text = page_meta.get("full_text", "") if page_meta else ""
 
             if page_type == "LEAGUE_INDEX":
-                # Always collect + recurse
+                if link.score < 50:
+                    logger.debug(f"[Index->INDEX skip low-score={link.score}] {link.url}")
+                    continue
+                # collect + recurse
                 logger.info(f"[Index->INDEX depth={current_depth}] {link.url}")
                 league_pages.append((link.url, page_yaml, full_text))
                 if parent_map is not None:
@@ -194,10 +206,14 @@ def _follow_index_links(
                         use_cache=use_cache,
                         force_refresh=force_refresh,
                         parent_map=parent_map,
+                        home_link_urls=home_link_urls,
                     )
 
             elif page_type == "LEAGUE_DETAIL":
-                # Always collect; recurse only if high-scored
+                if link.score < 50:
+                    logger.debug(f"[Index->DETAIL skip low-score={link.score}] {link.url}")
+                    continue
+                # collect; recurse only if high-scored
                 logger.info(f"[Index->DETAIL] {link.url}")
                 league_pages.append((link.url, page_yaml, full_text))
                 if parent_map is not None:
@@ -214,6 +230,7 @@ def _follow_index_links(
                         use_cache=use_cache,
                         force_refresh=force_refresh,
                         parent_map=parent_map,
+                        home_link_urls=home_link_urls,
                     )
 
             elif page_type in ("SCHEDULE", "MEDIUM_DETAIL"):
@@ -244,6 +261,7 @@ def _follow_index_links(
                             use_cache=use_cache,
                             force_refresh=force_refresh,
                             parent_map=parent_map,
+                            home_link_urls=home_link_urls,
                         )
                 # else: skip
 
@@ -302,6 +320,20 @@ def crawl(
     home_type = classify_page(home_yaml)
     logger.info(f"Start URL classified as: {home_type}")
     collected_pages.append((start_url, home_yaml, home_full_text))
+
+    # --- Build home-link set so subpages don't re-follow start-page links ---
+    try:
+        home_tree_parsed = yaml_lib.safe_load(home_yaml)
+    except Exception:
+        home_tree_parsed = None
+    home_link_urls: set[str] = set()
+    if home_tree_parsed:
+        for link in parse_yaml_links(home_tree_parsed, start_url):
+            if _same_domain(link.url, start_url):
+                home_link_urls.add(_normalize_url(link.url))
+    if home_link_urls:
+        logger.info(f"Home page has {len(home_link_urls)} internal links (will skip on subpages)")
+
     if home_type == "LEAGUE_INDEX":
         _follow_index_links(
             index_url=start_url,
@@ -314,6 +346,7 @@ def crawl(
             use_cache=use_cache,
             force_refresh=force_refresh,
             parent_map=parent_map,
+            home_link_urls=home_link_urls,
         )
 
     # --- If start URL is a sub-page, also fetch the root ---
@@ -338,6 +371,7 @@ def crawl(
                 use_cache=use_cache,
                 force_refresh=force_refresh,
                 parent_map=parent_map,
+                home_link_urls=home_link_urls,
             )
 
     # --- Parse home navigation links ---
@@ -397,6 +431,7 @@ def crawl(
                     use_cache=use_cache,
                     force_refresh=force_refresh,
                     parent_map=parent_map,
+                    home_link_urls=home_link_urls,
                 )
 
             elif page_type == "LEAGUE_DETAIL":
@@ -415,6 +450,7 @@ def crawl(
                         use_cache=use_cache,
                         force_refresh=force_refresh,
                         parent_map=parent_map,
+                        home_link_urls=home_link_urls,
                     )
 
             elif page_type in ("SCHEDULE", "MEDIUM_DETAIL"):
@@ -442,6 +478,7 @@ def crawl(
                     use_cache=use_cache,
                     force_refresh=force_refresh,
                     parent_map=parent_map,
+                    home_link_urls=home_link_urls,
                 )
 
         except Exception as e:
@@ -479,6 +516,18 @@ def crawl(
                         full_text = page_meta.get("full_text", "") if page_meta else ""
                         collected_pages.append((lnk.url, page_yaml, full_text))
                         category_coverage[cat].append(lnk.url)
+
+    # --- Dedup collected_pages by normalized URL (keep first occurrence) ---
+    seen_collected: set[str] = set()
+    deduped: list = []
+    for url, yaml_content, full_text in collected_pages:
+        norm = _normalize_url(url)
+        if norm not in seen_collected:
+            seen_collected.add(norm)
+            deduped.append((url, yaml_content, full_text))
+    if len(deduped) < len(collected_pages):
+        logger.info(f"Deduped collected_pages: {len(collected_pages)} → {len(deduped)}")
+    collected_pages = deduped
 
     if not collected_pages:
         logger.warning(f"No league pages found for {start_url}")

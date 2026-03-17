@@ -10,12 +10,14 @@ _MID_CHARS = 3000
 _TAIL_CHARS = 2000
 
 _PROMPT = """\
-Classify this rec-sports page. Reply with ONE word only:
-LEAGUE_INDEX - overview listing multiple leagues/divisions with links to details
-LEAGUE_DETAIL - specific league page: fees, venue, schedule, registration info
+Classify this web page. Reply with ONE word only:
+LEAGUE_INDEX - overview page listing multiple adult rec sports LEAGUES with links to details
+LEAGUE_DETAIL - specific adult rec sports LEAGUE page with fees, schedule, registration for a competitive season with games/matches
 MEDIUM_DETAIL - standings, statistics, team rosters, team listings, rules, policies
 SCHEDULE - game matchups with dates/times/teams
-OTHER - homepage, login, about, contact, blog, etc.
+OTHER - everything else including: homepage, login, about, contact, blog, children's/youth programs, swimming lessons, fitness classes, yoga, dance, card/board game clubs (bridge, chess, euchre), camps, training programs, drop-in activities, personal training, facility info
+
+A "league" requires: (a) an adult recreational SPORT, (b) scheduled competitive games/matches over a multi-week season, (c) team or individual registration. Swimming lessons, fitness classes, and social clubs are NOT leagues.
 
 {yaml_snippet}"""
 

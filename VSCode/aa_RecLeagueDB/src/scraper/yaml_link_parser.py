@@ -16,6 +16,12 @@ for _sport_name in SPORT_CODES.values():
         if len(_word) > 2:  # skip "&", "up", etc.
             _SPORT_KEYWORDS.add(_word)
 
+_NEGATIVE_KEYWORDS = [
+    "aquatic", "swim", "pool", "children", "child", "youth", "junior",
+    "kid", "toddler", "preschool", "fitness", "zumba", "yoga", "dance",
+    "pilates", "camp", "daycamp", "day-camp",
+]
+
 
 class DiscoveredLink:
     """Represents a discovered link with metadata."""
@@ -254,6 +260,10 @@ def score_links(links: List[DiscoveredLink]) -> List[DiscoveredLink]:
         if link.score < 100:
             if any(kw in url_lower for kw in _SPORT_KEYWORDS):
                 link.score += 100
+
+        # Penalize non-adult-rec-league content (children, aquatics, fitness)
+        if any(kw in url_lower for kw in _NEGATIVE_KEYWORDS):
+            link.score -= 100
 
         # Penalize social media and external links
         if any(

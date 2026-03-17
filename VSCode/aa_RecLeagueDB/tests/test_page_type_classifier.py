@@ -53,6 +53,16 @@ def test_classify_defaults_to_other_on_api_error():
         assert classify_page(SAMPLE_YAML) == "OTHER"
 
 
+def test_prompt_contains_league_guardrails():
+    """The classifier prompt must define what a league is and list exclusions."""
+    from src.scraper.page_type_classifier import _PROMPT
+    prompt_lower = _PROMPT.lower()
+    assert "adult" in prompt_lower, "Prompt should specify 'adult' leagues"
+    assert "swim" in prompt_lower, "Prompt should exclude swimming lessons"
+    assert "fitness" in prompt_lower, "Prompt should exclude fitness classes"
+    assert "children" in prompt_lower, "Prompt should exclude children's programs"
+
+
 def test_classify_truncates_large_input():
     """YAML is truncated to MAX_CLASSIFIER_CHARS before sending."""
     big_yaml = "x" * 20_000

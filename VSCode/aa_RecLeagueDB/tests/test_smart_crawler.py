@@ -7,8 +7,20 @@ from unittest.mock import patch, MagicMock
 # ---------------------------------------------------------------------------
 
 def _make_yaml(links: list[tuple[str, str]]) -> str:
-    """Build a minimal YAML snippet that yaml_link_parser can extract links from."""
+    """Build a minimal YAML snippet with links inside a nav element."""
     lines = ["- role: nav", "  children:"]
+    for url, text in links:
+        lines += [
+            f"  - role: a",
+            f"    name: {text}",
+            f"    url: {url}",
+        ]
+    return "\n".join(lines)
+
+
+def _make_content_yaml(links: list[tuple[str, str]]) -> str:
+    """Build a YAML snippet with links outside nav (content area)."""
+    lines = ["- role: main", "  children:"]
     for url, text in links:
         lines += [
             f"  - role: a",
@@ -411,18 +423,23 @@ class TestAdaptiveDepth:
 # ---------------------------------------------------------------------------
 
 class TestDecisionMatrix:
-    def test_league_detail_collected_regardless_of_score(self):
-        """LEAGUE_DETAIL pages are always collected, even with low link scores."""
-        home_yaml = _make_yaml([("/info", "Some Info")])  # low score anchor
+    def test_league_detail_collected_from_subpage_links(self):
+        """LEAGUE_DETAIL pages found on subpages (not home) are collected when score >= 50."""
+        # Home is LEAGUE_INDEX with a link to /season (high-scoring)
+        home_yaml = _make_content_yaml([("/season", "Current Season")])
+        # /season is LEAGUE_INDEX with a link to /league-info (scores 100 via "league")
+        season_yaml = _make_content_yaml([("/league-info", "League Info")])
         detail_yaml = "- role: main\n  name: League fees and registration"
 
         def fake_fetch(url, **kwargs):
-            if url == "https://example.com":
-                return (home_yaml, {})
-            return (detail_yaml, {})
+            if "season" in url:
+                return (season_yaml, {})
+            if "league-info" in url:
+                return (detail_yaml, {})
+            return (home_yaml, {})
 
         def fake_classify(yaml):
-            if yaml == home_yaml:
+            if yaml == home_yaml or yaml == season_yaml:
                 return "LEAGUE_INDEX"
             return "LEAGUE_DETAIL"
 
@@ -434,7 +451,7 @@ class TestDecisionMatrix:
             pages, _, _ = crawl("https://example.com")
 
         urls = [url for url, _y, _ft in pages]
-        assert "https://example.com/info" in urls
+        assert "https://example.com/league-info" in urls
 
     def test_league_detail_with_high_score_recurses(self):
         """LEAGUE_DETAIL pages with score >= 100 get their links followed."""
@@ -547,3 +564,192 @@ class TestDecisionMatrix:
         assert "https://example.com/register" in urls
         # The links from /register should also be followed
         assert "https://example.com/form" in visited
+
+
+# ---------------------------------------------------------------------------
+# Tests: collected_pages dedup
+# ---------------------------------------------------------------------------
+
+class TestCollectedPagesDedup:
+    def test_no_duplicate_urls_in_collected_pages(self):
+        """collected_pages should never contain the same URL twice."""
+        # Home is LEAGUE_INDEX with a link to /volleyball
+        # /volleyball is also a LEAGUE_INDEX with a link back to home (creates potential dup)
+        home_yaml = _make_yaml([("/volleyball", "Volleyball Leagues")])
+        vol_yaml = _make_yaml([("/volleyball-detail", "Volleyball Detail")])
+        detail_yaml = "- role: main\n  name: Volleyball league info"
+
+        def fake_fetch(url, **kwargs):
+            if "volleyball-detail" in url:
+                return (detail_yaml, {})
+            if "volleyball" in url:
+                return (vol_yaml, {})
+            return (home_yaml, {})
+
+        def fake_classify(yaml):
+            if yaml == home_yaml or yaml == vol_yaml:
+                return "LEAGUE_INDEX"
+            return "LEAGUE_DETAIL"
+
+        with (
+            patch("src.scraper.smart_crawler.fetch_page_as_yaml", side_effect=fake_fetch),
+            patch("src.scraper.smart_crawler.classify_page", side_effect=fake_classify),
+        ):
+            from src.scraper.smart_crawler import crawl
+            pages, _, _ = crawl("https://example.com")
+
+        urls = [url for url, _y, _ft in pages]
+        assert len(urls) == len(set(urls)), f"Duplicate URLs in collected_pages: {urls}"
+
+
+# ---------------------------------------------------------------------------
+# Tests: home-link dedup
+# ---------------------------------------------------------------------------
+
+class TestHomeLinkDedup:
+    def test_home_links_not_refollowed_on_subpages(self):
+        """Links discoverable from the start page should not be re-followed from subpages."""
+        # Home page has links to /register, /schedule, and /leagues (high-scoring)
+        home_yaml = _make_content_yaml([
+            ("/register", "Register"),
+            ("/schedule", "Schedule"),
+            ("/leagues", "Leagues"),
+        ])
+        # /leagues is a LEAGUE_INDEX that also links to /register and /schedule
+        # (same site-wide links) plus a unique link /soccer only on this subpage
+        leagues_yaml = _make_content_yaml([
+            ("/register", "Register"),
+            ("/schedule", "Schedule"),
+            ("/soccer", "Soccer Detail"),
+        ])
+        soccer_yaml = "- role: main\n  name: Soccer league"
+
+        fetched = []
+
+        def fake_fetch(url, **kwargs):
+            fetched.append(url)
+            if "leagues" in url:
+                return (leagues_yaml, {})
+            if "soccer" in url:
+                return (soccer_yaml, {})
+            return (home_yaml, {})
+
+        def fake_classify(yaml):
+            if yaml == leagues_yaml:
+                return "LEAGUE_INDEX"
+            if yaml == soccer_yaml:
+                return "LEAGUE_DETAIL"
+            return "OTHER"
+
+        with (
+            patch("src.scraper.smart_crawler.fetch_page_as_yaml", side_effect=fake_fetch),
+            patch("src.scraper.smart_crawler.classify_page", side_effect=fake_classify),
+        ):
+            from src.scraper.smart_crawler import crawl
+            pages, _, _ = crawl("https://example.com")
+
+        # /soccer should be fetched (unique to subpage)
+        assert "https://example.com/soccer" in fetched
+        # /register and /schedule should NOT be re-fetched from _follow_index_links
+        # on /leagues — they're home-page links already handled by Step A
+        # (They may appear in fetched[] from Step A, but should not appear twice)
+        register_fetches = [u for u in fetched if "register" in u]
+        schedule_fetches = [u for u in fetched if u.endswith("/schedule")]
+        assert len(register_fetches) <= 1, f"/register fetched {len(register_fetches)} times"
+        assert len(schedule_fetches) <= 1, f"/schedule fetched {len(schedule_fetches)} times"
+
+
+# ---------------------------------------------------------------------------
+# Tests: score gate
+# ---------------------------------------------------------------------------
+
+class TestScoreGate:
+    def test_low_score_league_detail_skipped_in_follow_index(self):
+        """LEAGUE_DETAIL pages with score < 50 are NOT collected from _follow_index_links."""
+        # Home links to /leagues (high-scoring). /leagues is LEAGUE_INDEX with
+        # a link to /swim-lessons (negative keyword = low score, unique to subpage).
+        home_yaml = _make_content_yaml([("/leagues", "Leagues")])
+        leagues_yaml = _make_content_yaml([("/swim-lessons", "Swimming Lessons")])
+        swim_yaml = "- role: main\n  name: Swimming lesson schedule and fees"
+
+        def fake_fetch(url, **kwargs):
+            if "swim" in url:
+                return (swim_yaml, {})
+            if "leagues" in url:
+                return (leagues_yaml, {})
+            return (home_yaml, {})
+
+        def fake_classify(yaml):
+            if yaml == home_yaml or yaml == leagues_yaml:
+                return "LEAGUE_INDEX"
+            # Classifier incorrectly says LEAGUE_DETAIL (has fees + schedule)
+            return "LEAGUE_DETAIL"
+
+        with (
+            patch("src.scraper.smart_crawler.fetch_page_as_yaml", side_effect=fake_fetch),
+            patch("src.scraper.smart_crawler.classify_page", side_effect=fake_classify),
+        ):
+            from src.scraper.smart_crawler import crawl
+            pages, _, _ = crawl("https://example.com")
+
+        urls = [url for url, _y, _ft in pages]
+        # swim-lessons should NOT be collected despite LEAGUE_DETAIL classification
+        # "swim" negative keyword -> score < 50 -> skipped by score gate
+        assert "https://example.com/swim-lessons" not in urls
+
+    def test_low_score_league_index_skipped_in_follow_index(self):
+        """LEAGUE_INDEX pages with score < 50 are NOT collected from _follow_index_links."""
+        # /sports links to /children-programs (negative keyword, unique to subpage)
+        home_yaml = _make_content_yaml([("/sports", "Sports")])
+        sports_yaml = _make_content_yaml([("/children-programs", "Children Programs")])
+        children_yaml = _make_content_yaml([("/kids-soccer", "Kids Soccer")])
+
+        def fake_fetch(url, **kwargs):
+            if "children" in url:
+                return (children_yaml, {})
+            if "sports" in url:
+                return (sports_yaml, {})
+            return (home_yaml, {})
+
+        def fake_classify(yaml):
+            return "LEAGUE_INDEX"
+
+        with (
+            patch("src.scraper.smart_crawler.fetch_page_as_yaml", side_effect=fake_fetch),
+            patch("src.scraper.smart_crawler.classify_page", side_effect=fake_classify),
+        ):
+            from src.scraper.smart_crawler import crawl
+            pages, _, _ = crawl("https://example.com")
+
+        urls = [url for url, _y, _ft in pages]
+        # children-programs has "children" negative keyword -> score < 50 -> skipped
+        assert "https://example.com/children-programs" not in urls
+
+    def test_high_score_league_detail_still_collected(self):
+        """LEAGUE_DETAIL pages with score >= 50 are still collected (no regression)."""
+        # /sports links to /volleyball (high-scoring, unique to subpage)
+        home_yaml = _make_content_yaml([("/sports", "Sports")])
+        sports_yaml = _make_content_yaml([("/volleyball", "Volleyball Leagues")])
+        vol_yaml = "- role: main\n  name: Volleyball league registration"
+
+        def fake_fetch(url, **kwargs):
+            if "volleyball" in url:
+                return (vol_yaml, {})
+            if "sports" in url:
+                return (sports_yaml, {})
+            return (home_yaml, {})
+
+        def fake_classify(yaml):
+            if yaml == vol_yaml:
+                return "LEAGUE_DETAIL"
+            return "LEAGUE_INDEX"
+
+        with (
+            patch("src.scraper.smart_crawler.fetch_page_as_yaml", side_effect=fake_fetch),
+            patch("src.scraper.smart_crawler.classify_page", side_effect=fake_classify),
+        ):
+            from src.scraper.smart_crawler import crawl
+            pages, _, _ = crawl("https://example.com")
+
+        urls = [url for url, _y, _ft in pages]
+        assert "https://example.com/volleyball" in urls

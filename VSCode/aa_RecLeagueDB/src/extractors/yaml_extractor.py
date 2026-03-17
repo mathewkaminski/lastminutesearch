@@ -262,7 +262,10 @@ def _build_yaml_extraction_prompt(yaml_content: str, url: str, full_text: str = 
 }}
 
 INSTRUCTIONS:
-- Extract ALL distinct leagues from this page
+- ONLY extract ADULT recreational sports LEAGUES — structured programs where teams/individuals register for a multi-week season with scheduled games or matches
+- DO NOT extract: children's/youth programs, swimming lessons, fitness classes (Zumba, yoga, dance), drop-in sessions, card/board game clubs (bridge, euchre, chess), training programs (CIT, LIT), camps, or one-time events
+- A "league" must involve: (a) a sport or physical competition, (b) scheduled recurring games/matches, (c) registration for adults. If unsure, skip it.
+- Extract ALL distinct leagues from this page that match the above criteria
 - sport_name: Use the ACTUAL sport name from the page. "Ball Hockey" not "Ice Hockey". "3-Pitch Softball" not "Baseball". Read the page heading and content carefully.
 - season_name: Use the page's own season label. If the page says "Late Winter 2026 Leagues", use "Late Winter". If it says "Summer", use "Summer".
 - If a page lists multiple divisions/formats (e.g., 6v6 and 8v8), extract both as separate leagues

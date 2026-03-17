@@ -42,12 +42,13 @@ def get_leagues(filters: dict | None = None) -> list[dict]:
     Args:
         filters: Optional dict with any of:
             - org_search (str): ilike match on organization_name
-            - sport_season_codes (list[str]): exact-match multi-select
+            - sport_names (list[str]): exact-match on sport_name
             - days_of_week (list[str]): exact-match multi-select
             - genders (list[str]): exact-match multi-select
+            - comp_levels (list[str]): exact-match on standardized_comp_level
+            - base_domains (list[str]): exact-match on base_domain
             - quality_min (int): minimum quality_score
             - quality_max (int): maximum quality_score
-            - season_year (int): exact season_year match
 
     Returns:
         List of league record dicts, ordered by quality_score ascending.
@@ -64,21 +65,51 @@ def get_leagues(filters: dict | None = None) -> list[dict]:
     if filters:
         if org := filters.get("org_search"):
             q = q.ilike("organization_name", f"%{org}%")
-        if codes := filters.get("sport_season_codes"):
-            q = q.in_("sport_season_code", codes)
+        if sports := filters.get("sport_names"):
+            q = q.in_("sport_name", sports)
         if days := filters.get("days_of_week"):
             q = q.in_("day_of_week", days)
         if genders := filters.get("genders"):
             q = q.in_("gender_eligibility", genders)
+        if levels := filters.get("comp_levels"):
+            q = q.in_("standardized_comp_level", levels)
+        if domains := filters.get("base_domains"):
+            q = q.in_("base_domain", domains)
         if (qmin := filters.get("quality_min")) is not None:
             q = q.gte("quality_score", qmin)
         if (qmax := filters.get("quality_max")) is not None:
             q = q.lte("quality_score", qmax)
-        if year := filters.get("season_year"):
-            q = q.eq("season_year", year)
 
     result = q.order("quality_score").execute()
     return result.data or []
+
+
+def get_filter_options() -> dict:
+    """Return distinct values for dynamic filter dropdowns.
+
+    Returns:
+        Dict with keys: sport_names, base_domains, comp_levels, genders.
+        Each value is a sorted list of non-null distinct strings.
+    """
+    client = get_client()
+    result = (
+        client.table("leagues_metadata")
+        .select("sport_name, base_domain, standardized_comp_level, gender_eligibility")
+        .eq("is_archived", False)
+        .execute()
+    )
+    rows = result.data or []
+
+    def _distinct(field: str) -> list[str]:
+        vals = {r.get(field) for r in rows if r.get(field)}
+        return sorted(vals)
+
+    return {
+        "sport_names": _distinct("sport_name"),
+        "base_domains": _distinct("base_domain"),
+        "comp_levels": _distinct("standardized_comp_level"),
+        "genders": _distinct("gender_eligibility"),
+    }
 
 
 def get_quality_summary() -> dict:
@@ -230,3 +261,18 @@ def add_to_rescrape_queue(urls: list[str]) -> None:
     rows = [{"url": url, "status": "PENDING", "source": "rescrape_trigger"} for url in urls]
     client.table("scrape_queue").upsert(rows, on_conflict="url").execute()
     logger.info("Added %d URLs to rescrape queue", len(urls))
+
+
+def update_num_teams(league_id: str, num_teams: int) -> None:
+    """Write a confirmed new team count directly to leagues_metadata.
+
+    Args:
+        league_id: UUID of the league to update.
+        num_teams: The confirmed number of teams.
+    """
+    from datetime import datetime, timezone
+    client = get_client()
+    client.table("leagues_metadata").update({
+        "num_teams": num_teams,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("league_id", league_id).execute()

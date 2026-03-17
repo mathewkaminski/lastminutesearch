@@ -164,3 +164,18 @@ def test_add_to_rescrape_queue_inserts_urls():
         from src.database.leagues_reader import add_to_rescrape_queue
         add_to_rescrape_queue(["https://example.com", "https://other.com"])
     assert mock_client.table.return_value.upsert.call_count == 1
+
+
+def test_update_num_teams_calls_db():
+    mock_client = _make_mock_client([])
+    with patch("src.database.leagues_reader.get_client", return_value=mock_client):
+        from src.database.leagues_reader import update_num_teams
+        update_num_teams("league-abc", 9)
+
+    update_call = mock_client.table.return_value.update
+    assert update_call.called
+    payload = update_call.call_args[0][0]
+    assert payload["num_teams"] == 9
+    assert "updated_at" in payload
+    # Confirm the full chain (.update().eq().execute()) was actually called
+    assert mock_client.table.return_value.update.return_value.eq.return_value.execute.called

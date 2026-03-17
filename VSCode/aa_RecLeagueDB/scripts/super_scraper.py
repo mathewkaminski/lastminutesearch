@@ -6,9 +6,11 @@ Usage:
 """
 from __future__ import annotations
 import argparse
+import asyncio
 import logging
 import os
 import sys
+from difflib import SequenceMatcher
 from pathlib import Path
 from uuid import uuid4
 
@@ -46,41 +48,42 @@ def _get_existing_leagues(url: str) -> list[dict]:
     return result.data or []
 
 
-def _run_pass2(url: str, run_id: str) -> list[dict]:
-    """Pass 2: Playwright navigator → team count extraction. Returns list of extraction dicts."""
-    from playwright.sync_api import sync_playwright
+async def _run_pass2_async(url: str, run_id: str) -> list[dict]:
+    """Async core of Pass 2: async_playwright → navigator → team count extraction."""
+    from playwright.async_api import async_playwright
     from src.checkers.playwright_navigator import PlaywrightNavigator
     from src.checkers.team_count_extractor import TeamCountExtractor
 
     navigator = PlaywrightNavigator()
     extractor = TeamCountExtractor()
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        navigated_pages = await navigator.navigate(page, url, run_id, "super_scraper")
+        await browser.close()
+
     results = []
+    for nav_page in navigated_pages:
+        extraction = extractor.extract(
+            nav_page.html, url=nav_page.url, nav_path=nav_page.nav_path
+        )
+        results.append({
+            "division_name": extraction.division_name,
+            "num_teams": len(extraction.team_names),
+            "team_names": extraction.team_names,
+            "nav_path": extraction.nav_path,
+        })
+    return results
 
+
+def _run_pass2(url: str, run_id: str) -> list[dict]:
+    """Pass 2: Playwright navigator → team count extraction. Returns list of extraction dicts."""
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-
-            import asyncio
-            navigated_pages = asyncio.run(
-                navigator.navigate(page, url, run_id, "super_scraper")
-            )
-            browser.close()
-
-        for nav_page in navigated_pages:
-            extraction = extractor.extract(
-                nav_page.html, url=nav_page.url, nav_path=nav_page.nav_path
-            )
-            results.append({
-                "division_name": extraction.division_name,
-                "num_teams": len(extraction.team_names),
-                "team_names": extraction.team_names,
-                "nav_path": extraction.nav_path,
-            })
+        return asyncio.run(_run_pass2_async(url, run_id))
     except Exception as e:
         logger.warning(f"Pass 2 failed for {url}: {e}")
-
-    return results
+        return []
 
 
 def _queue_for_review(url: str, extracted: dict, existing: dict, reason: str) -> None:
@@ -95,6 +98,40 @@ def _queue_for_review(url: str, extracted: dict, existing: dict, reason: str) ->
         }).execute()
     except Exception as e:
         logger.warning(f"Could not write review queue entry: {e}")
+
+
+def _match_pass2_to_extracted(p2: dict, extracted: list[dict]) -> dict | None:
+    """Match a Pass 2 team count result to an extracted league by division name.
+
+    Uses fuzzy matching against the extracted league's day_of_week,
+    gender_eligibility, and source_comp_level — the same fields that appear
+    in division names on real league sites.
+
+    Falls back to a direct match if there is exactly one extracted league and
+    Pass 2 provided no division name.
+
+    Returns None rather than guessing when confidence is low.
+    """
+    division_name = (p2.get("division_name") or "").lower().strip()
+
+    if not division_name:
+        return extracted[0] if len(extracted) == 1 else None
+
+    best_score = 0.0
+    best_match = None
+    for league in extracted:
+        parts = [
+            league.get("day_of_week") or "",
+            league.get("gender_eligibility") or "",
+            league.get("source_comp_level") or "",
+        ]
+        candidate = " ".join(p for p in parts if p).lower()
+        score = SequenceMatcher(None, division_name, candidate).ratio()
+        if score > best_score:
+            best_score = score
+            best_match = league
+
+    return best_match if best_score >= 0.4 else None  # 0.4 threshold: conservative match floor
 
 
 def run(url: str, dry_run: bool = False) -> dict:
@@ -136,12 +173,13 @@ def run(url: str, dry_run: bool = False) -> dict:
     pass2_results = _run_pass2(url, run_id)
     logger.info(f"Pass 2 found {len(pass2_results)} division(s)")
 
-    # Enrich Pass 1 extractions with Pass 2 team counts where division matches
-    for extracted in all_extracted:
-        for p2 in pass2_results:
-            if p2.get("num_teams") and not extracted.get("num_teams"):
-                extracted["num_teams"] = p2["num_teams"]
-                break
+    # Enrich Pass 1 extractions with Pass 2 team counts using division-based matching
+    for p2 in pass2_results:
+        if not p2.get("num_teams"):
+            continue
+        matched = _match_pass2_to_extracted(p2, all_extracted)
+        if matched is not None and not matched.get("num_teams"):
+            matched["num_teams"] = p2["num_teams"]
 
     if dry_run:
         logger.info(f"DRY-RUN: would write {len(all_extracted)} league(s)")

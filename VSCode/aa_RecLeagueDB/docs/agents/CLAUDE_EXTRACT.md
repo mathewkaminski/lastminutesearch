@@ -6,21 +6,22 @@
 
 ---
 
-## Current Phase: Phase 4 - YAML-Based Extraction & Multi-Page Navigation
+## Current State: Smart Crawler Pipeline
 
-**What we're building:** Reliable end-to-end pipeline from URL → YAML snapshots → extracted leagues → database storage
+**What we have:** End-to-end pipeline from URL → BFS crawl (5-way decision matrix) → YAML snapshots → GPT-4o extraction → database storage
 
 **Key files:**
-- `scripts/mcp_agent_scraper.py` - MCP agent scraper (Level 0, manual/complex sites)
-- `scripts/extract_leagues_yaml.py` - Automated YAML pipeline (Level 1, bulk)
-- `src/scraper/mcp_client.py` - MCP server connection utilities
-- `src/scraper/mcp_navigator.py` - Claude navigation agent loop
-- `src/scraper/playwright_yaml_fetcher.py` - Playwright accessibility tree → YAML
+- `scripts/smart_scraper.py` - **Primary L1 pipeline**: BFS Playwright + Haiku classifier + GPT-4o extraction
+- `scripts/super_scraper.py` - L1.5: Two-pass deep crawl + team count verification + reconciliation
+- `scripts/extract_leagues_yaml.py` - Legacy L1: YAML pipeline (bulk, still used)
+- `scripts/mcp_agent_scraper.py` - L0: MCP agent scraper (manual/complex sites, legacy)
+- `src/scraper/smart_crawler.py` - Core BFS crawler with 5-way page-type decision matrix
+- `src/scraper/page_type_classifier.py` - Haiku-backed page type classifier (HOME/LEAGUE_LIST/LEAGUE_DETAIL/UNRELATED/GENERIC)
+- `src/scraper/playwright_yaml_fetcher.py` - Playwright accessibility tree → YAML (rate limit detection, retry)
 - `src/scraper/yaml_link_parser.py` - Link discovery and scoring from YAML
-- `src/extractors/yaml_extractor.py` - GPT-4 extraction from YAML/snapshots
+- `src/extractors/yaml_extractor.py` - GPT-4o extraction from YAML/snapshots
 - `src/database/link_store.py` - Navigation link storage with tracking
-- `docs/EXTRACTION_ARCHITECTURE.md` - Detailed architecture
-- `docs/PHASE_4_QUICK_START.md` - Current phase goals
+- `src/database/snapshot_store.py` - Page snapshot storage and retrieval
 
 ---
 
@@ -62,16 +63,17 @@ python scripts/extract_leagues_yaml.py https://ottawavolleysixes.com
 
 | Level | Script | Trigger | Description |
 |-------|--------|---------|-------------|
-| L0 | `mcp_agent_scraper.py` | Manual | Playwright MCP agent — manual/complex sites, run when L1 fails |
-| L1 | `extract_leagues_yaml.py` | Automated bulk | Standard: BFS YAML crawl, Haiku classify, Sonnet extract |
+| L1 | `smart_scraper.py` | Automated bulk (primary) | BFS Playwright + Haiku 5-way classifier + GPT-4o extraction. Replaces `mcp_agent_scraper.py` for most sites. |
+| L1 (legacy) | `extract_leagues_yaml.py` | Automated bulk | Older YAML pipeline — still used for bulk queue runs |
 | L1.5 | `super_scraper.py` | Auto (League Checker when `quality_score < 75`) | Two passes: deep YAML crawl (depth=4, link threshold=60) + Playwright team count verification. Reconciles against existing records; auto-archives THIN contradictions (`quality_score < 60`), queues BORDERLINE for review |
+| L0 | `mcp_agent_scraper.py` | Manual | Playwright MCP agent — manual/complex sites, run when L1 fails |
 | L2 | Firecrawl API | Last resort | Paid fallback — use only when L1/L1.5 both fail |
 
 **Quality threshold constants** (in `src/config/quality_thresholds.py`):
 - `DEEP_SCRAPE_THRESHOLD = 75` — League Checker triggers super scraper when any record is below this
 - `AUTO_REPLACE_THRESHOLD = 60` — Reconciler auto-archives existing record when contradicted at this quality level
 
-### Level 0: Playwright MCP Agent (PRIMARY for manual/complex sites)
+### Level 0: Playwright MCP Agent (legacy fallback for manual/complex sites)
 - **Script:** `scripts/mcp_agent_scraper.py`
 - **Use for:** Manual one-off scraping, JS-heavy sites, unusual navigation structures
 - **Cost:** Free (local) + Claude API tokens (~$0.01–0.05 per URL)
@@ -79,7 +81,13 @@ python scripts/extract_leagues_yaml.py https://ottawavolleysixes.com
 - **Strengths:** Handles dynamic content, accordions, tabs, unusual site structure
 - **When to use:** New sites, sites with low quality_score, sites that fail Level 1
 
-### Level 1: Playwright YAML Pipeline (PRIMARY for automated bulk)
+### Level 1: Smart Scraper (PRIMARY for automated bulk)
+- **Script:** `scripts/smart_scraper.py`
+- **Use for:** Automated bulk scraping — primary pipeline for most sites
+- **How:** BFS crawl via `smart_crawler.py`, 5-way page-type classification (HOME / LEAGUE_LIST / LEAGUE_DETAIL / UNRELATED / GENERIC), YAML extraction per relevant page, GPT-4o extraction
+- **Strengths:** Deterministic, score-gated decision matrix, home-link dedup, classifier guardrails
+
+### Level 1 (legacy): Playwright YAML Pipeline
 - **Script:** `scripts/extract_leagues_yaml.py`
 - **Use for:** Automated bulk scraping of known-good sites
 - **Cost:** Free (local execution)
@@ -586,26 +594,12 @@ const tree = {
 
 ---
 
-## Next Steps (Phase Roadmap)
+## Roadmap Notes
 
-**Phase 5 (Current):** Playwright MCP Agent
-- `scripts/mcp_agent_scraper.py` built and working for manual one-off scraping
-- Use for complex sites and new URL validation
-- Scale to automated queue processing when comfortable
-
-**Phase 5.2 (Next):** Firecrawl Fallback Integration
-- Add Firecrawl for sites that defeat both MCP and YAML approaches
-- Automatic escalation when Playwright fails
-
-**Phase 6 (Future):** Historical Season Tracking
-- Separate `leagues` from `league_seasons`
-- Track year-over-year pricing changes
-- Multi-season extraction
-
-**Phase 7 (Future):** Team Count Enrichment
-- Secondary extraction for `num_teams` field
-- Use standings/schedule pages
-- Only trigger when `num_teams` is NULL or low confidence
+- **Team Count Enrichment** — Shipped. Available via Teams mode in `fill_in_leagues.py` (backed by `src/checkers/league_checker.py`).
+- **Firecrawl Fallback** — Integrated. Used as L2 in `src/scraper/firecrawl_client.py`.
+- **Historical Season Tracking** — Future. Deferred to Parking Lot.
+- **Parent-child merge + tiered quality gate** — In progress. See `docs/plans/2026-03-15-parent-child-merge.md` and `docs/plans/2026-03-17-crawler-guardrails-v2.md`.
 
 ---
 

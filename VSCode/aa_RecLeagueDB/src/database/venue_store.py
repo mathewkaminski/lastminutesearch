@@ -203,6 +203,108 @@ class VenueStore:
         )
         return result.data
 
+    def get_venues_for_classification(self) -> list[dict]:
+        """Return enriched venues (has lat) that have not yet been classified."""
+        result = (
+            self.client.table("venues")
+            .select("venue_id, venue_name, google_name, address")
+            .not_.is_("lat", "null")
+            .is_("court_type_broad", "null")
+            .execute()
+        )
+        return result.data
+
+    def save_court_type(
+        self,
+        venue_id: str,
+        broad: str,
+        broad_conf: int,
+        specific: str,
+        specific_conf: int,
+    ) -> None:
+        """Write court type classification result for a venue."""
+        self.client.table("venues").update({
+            "court_type_broad": broad,
+            "court_type_broad_conf": broad_conf,
+            "court_type_specific": specific,
+            "court_type_specific_conf": specific_conf,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("venue_id", venue_id).execute()
+
+    def get_enriched_venues(
+        self,
+        broad: str | None = None,
+        specific: str | None = None,
+        province: str | None = None,
+        city: str | None = None,
+        sport: str | None = None,
+    ) -> list[dict]:
+        """Return enriched venues (has lat/lng), optionally filtered."""
+        query = (
+            self.client.table("venues")
+            .select(
+                "venue_id, venue_name, google_name, city, province, address, "
+                "confidence_score, manually_verified, sports, days_of_week, "
+                "court_type_broad, court_type_broad_conf, "
+                "court_type_specific, court_type_specific_conf"
+            )
+            .not_.is_("lat", "null")
+        )
+        if broad:
+            query = query.eq("court_type_broad", broad)
+        if specific:
+            query = query.eq("court_type_specific", specific)
+        if province:
+            query = query.eq("province", province)
+        if city:
+            query = query.ilike("city", f"%{city}%")
+        if sport:
+            query = query.contains("sports", [sport])
+        return query.order("city").order("venue_name").execute().data
+
+    def get_league_stats_for_venues(self, venue_ids: list[str]) -> dict:
+        """Aggregate league data from leagues_metadata for a list of venue_ids.
+
+        Returns dict keyed by venue_id with:
+            num_leagues, avg_team_fee, avg_individual_fee, hours (sorted list)
+        """
+        if not venue_ids:
+            return {}
+        result = (
+            self.client.table("leagues_metadata")
+            .select("venue_id, team_fee, individual_fee, start_time, day_of_week")
+            .in_("venue_id", venue_ids)
+            .execute()
+        )
+        stats: dict = {}
+        for row in result.data:
+            vid = row["venue_id"]
+            if vid not in stats:
+                stats[vid] = {
+                    "num_leagues": 0,
+                    "team_fees": [],
+                    "individual_fees": [],
+                    "hours": set(),
+                }
+            s = stats[vid]
+            s["num_leagues"] += 1
+            if row.get("team_fee") is not None:
+                s["team_fees"].append(float(row["team_fee"]))
+            if row.get("individual_fee") is not None:
+                s["individual_fees"].append(float(row["individual_fee"]))
+            if row.get("start_time"):
+                s["hours"].add(row["start_time"])
+
+        return {
+            vid: {
+                "num_leagues": s["num_leagues"],
+                "avg_team_fee": round(sum(s["team_fees"]) / len(s["team_fees"]), 2) if s["team_fees"] else None,
+                "avg_individual_fee": round(sum(s["individual_fees"]) / len(s["individual_fees"]), 2) if s["individual_fees"] else None,
+                "hours": sorted(s["hours"]),
+            }
+            for vid, s in stats.items()
+        }
+
     def update_google_name(self, venue_id: str, google_name: str | None) -> None:
         """Update the display label for a venue."""
         self.client.table("venues").update({

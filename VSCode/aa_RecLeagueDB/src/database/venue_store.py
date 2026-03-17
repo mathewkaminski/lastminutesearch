@@ -26,6 +26,7 @@ class VenueStore:
         self,
         venue_name: str,
         city: str,
+        google_name: str | None,
         address: str | None,
         lat: float | None,
         lng: float | None,
@@ -43,6 +44,7 @@ class VenueStore:
         data = {
             "venue_name": venue_name,
             "city": city,
+            "google_name": google_name,
             "province": province,
             "address": address,
             "lat": lat,

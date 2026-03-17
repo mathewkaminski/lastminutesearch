@@ -62,6 +62,7 @@ class VenueEnricher:
         venue_id = self.store.save_venue(
             venue_name=venue_name,
             city=city,
+            google_name=api_result.get("name"),
             address=api_result["formatted_address"],
             lat=api_result["lat"],
             lng=api_result["lng"],

@@ -111,6 +111,16 @@ def test_get_league_stats_aggregates_correctly(store, mock_client):
     assert "7:00 PM" in stats["uuid-1"]["hours"]
 
 
+def test_get_enriched_venues_with_season_returns_empty_when_no_match(store, mock_client):
+    # Season subquery returns no venue_ids → short-circuit, return [] immediately
+    mock_client.table.return_value.select.return_value.ilike.return_value.execute.return_value.data = []
+    result = store.get_enriched_venues(season="Fall 2025")
+    assert result == []
+    # venues table should never have been queried — only leagues_metadata
+    queried_tables = [c[0][0] for c in mock_client.table.call_args_list]
+    assert "venues" not in queried_tables
+
+
 def test_get_leagues_for_venue_returns_rows(store, mock_client):
     mock_client.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value.data = [
         {

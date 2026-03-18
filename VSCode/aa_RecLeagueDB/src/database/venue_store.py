@@ -262,8 +262,22 @@ class VenueStore:
         province: str | None = None,
         city: str | None = None,
         sport: str | None = None,
+        season: str | None = None,
     ) -> list[dict]:
         """Return enriched venues (has lat/lng), optionally filtered."""
+        # Season pre-filter: find venue_ids that have a league with this season_name
+        season_venue_ids: list[str] | None = None
+        if season:
+            season_rows = (
+                self.client.table("leagues_metadata")
+                .select("venue_id")
+                .ilike("season_name", f"%{season}%")
+                .execute()
+            ).data
+            season_venue_ids = list({r["venue_id"] for r in season_rows if r.get("venue_id")})
+            if not season_venue_ids:
+                return []
+
         query = (
             self.client.table("venues")
             .select(
@@ -284,6 +298,8 @@ class VenueStore:
             query = query.ilike("city", f"%{city}%")
         if sport:
             query = query.contains("sports", [sport])
+        if season_venue_ids is not None:
+            query = query.in_("venue_id", season_venue_ids)
         return query.order("city").order("venue_name").execute().data
 
     def get_league_stats_for_venues(self, venue_ids: list[str]) -> dict:

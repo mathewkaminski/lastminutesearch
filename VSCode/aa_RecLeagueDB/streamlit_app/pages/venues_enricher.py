@@ -266,7 +266,8 @@ def _render_unenriched_tab(store: VenueStore) -> None:
                         f"- **{lg.get('sport_name', '?')}** · "
                         f"{lg.get('organization_name', '?')} · "
                         f"{lg.get('season_name', '?')} · "
-                        f"{lg.get('day_of_week', '?')}"
+                        f"{lg.get('day_of_week', '?')} · "
+                        f"{lg.get('city', '?')}"
                     )
             st.divider()
 

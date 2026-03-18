@@ -386,7 +386,7 @@ class VenueStore:
         result = (
             self.client.table("leagues_metadata")
             .select(
-                "league_id, organization_name, sport_name, season_name, day_of_week"
+                "league_id, organization_name, sport_name, season_name, day_of_week, city"
             )
             .ilike("venue_name", venue_name)
             .order("day_of_week")

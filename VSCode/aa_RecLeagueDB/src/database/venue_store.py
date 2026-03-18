@@ -173,6 +173,28 @@ class VenueStore:
                 names.append(name)
         return names
 
+    def get_unenriched_with_counts(self) -> list[dict]:
+        """Return unenriched venue names with league_count, sorted by count desc.
+
+        Each entry: {"venue_name": str, "league_count": int}
+        """
+        result = (
+            self.client.table("leagues_metadata")
+            .select("venue_name")
+            .is_("venue_id", "null")
+            .not_.is_("venue_name", "null")
+            .execute()
+        )
+        counts: dict[str, int] = {}
+        for row in result.data:
+            name = row["venue_name"]
+            counts[name] = counts.get(name, 0) + 1
+        return sorted(
+            [{"venue_name": n, "league_count": c} for n, c in counts.items()],
+            key=lambda x: x["league_count"],
+            reverse=True,
+        )
+
     def get_enrichment_stats(self) -> dict:
         """Return counts for the Streamlit stats panel."""
         all_rows = (

@@ -111,6 +111,20 @@ def test_get_league_stats_aggregates_correctly(store, mock_client):
     assert "7:00 PM" in stats["uuid-1"]["hours"]
 
 
+def test_get_unenriched_with_counts_returns_name_and_count(store, mock_client):
+    mock_client.table.return_value.select.return_value.is_.return_value.not_.is_.return_value.execute.return_value.data = [
+        {"venue_name": "Park A"},
+        {"venue_name": "Park A"},
+        {"venue_name": "Park B"},
+    ]
+    results = store.get_unenriched_with_counts()
+    assert len(results) == 2
+    park_a = next(r for r in results if r["venue_name"] == "Park A")
+    assert park_a["league_count"] == 2
+    park_b = next(r for r in results if r["venue_name"] == "Park B")
+    assert park_b["league_count"] == 1
+
+
 def test_toggle_verified_sets_value(store, mock_client):
     mock_client.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
 

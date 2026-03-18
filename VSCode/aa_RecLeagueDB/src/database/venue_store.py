@@ -372,6 +372,13 @@ class VenueStore:
             {"manually_verified": True, "updated_at": datetime.now(timezone.utc).isoformat()}
         ).eq("venue_id", venue_id).execute()
 
+    def toggle_verified(self, venue_id: str, verified: bool) -> None:
+        """Set manually_verified to True or False."""
+        self.client.table("venues").update({
+            "manually_verified": verified,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("venue_id", venue_id).execute()
+
     def update_venue_address(
         self, venue_id: str, address: str, lat: float | None, lng: float | None
     ) -> None:

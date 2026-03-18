@@ -111,6 +111,18 @@ def test_get_league_stats_aggregates_correctly(store, mock_client):
     assert "7:00 PM" in stats["uuid-1"]["hours"]
 
 
+def test_toggle_verified_sets_value(store, mock_client):
+    mock_client.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+
+    store.toggle_verified("uuid-1", True)
+    payload = mock_client.table.return_value.update.call_args[0][0]
+    assert payload["manually_verified"] is True
+
+    store.toggle_verified("uuid-1", False)
+    payload = mock_client.table.return_value.update.call_args[0][0]
+    assert payload["manually_verified"] is False
+
+
 def test_get_enriched_venues_with_season_returns_empty_when_no_match(store, mock_client):
     # Season subquery returns no venue_ids → short-circuit, return [] immediately
     mock_client.table.return_value.select.return_value.ilike.return_value.execute.return_value.data = []

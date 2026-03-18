@@ -115,7 +115,8 @@ class FieldEnricher:
             ]
 
         # Step 4: try extraction from cached snapshot
-        domain = urlparse(url).netloc
+        from src.utils.domain_extractor import extract_base_domain
+        domain = extract_base_domain(url)
         snapshots = get_snapshots_by_domain(domain)
         snapshot_content = snapshots[0]["content"] if snapshots else None
 
@@ -211,7 +212,7 @@ class FieldEnricher:
         for i, lg in enumerate(leagues, 1):
             known = {
                 k: v for k, v in lg.items()
-                if k in ("organization_name", "day_of_week", "gender_eligibility",
+                if k in ("league_id", "organization_name", "day_of_week", "gender_eligibility",
                          "source_comp_level", "sport_season_code", "num_teams")
                 and v is not None
             }

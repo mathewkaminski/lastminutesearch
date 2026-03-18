@@ -111,6 +111,16 @@ def test_get_league_stats_aggregates_correctly(store, mock_client):
     assert "7:00 PM" in stats["uuid-1"]["hours"]
 
 
+def test_get_leagues_for_venue_name_returns_rows(store, mock_client):
+    mock_client.table.return_value.select.return_value.ilike.return_value.order.return_value.execute.return_value.data = [
+        {"league_id": "lg-1", "organization_name": "Rec Co", "sport_name": "Volleyball",
+         "season_name": "Winter 2026", "day_of_week": "Thursday"}
+    ]
+    results = store.get_leagues_for_venue_name("Community Centre")
+    assert len(results) == 1
+    assert results[0]["sport_name"] == "Volleyball"
+
+
 def test_get_unenriched_with_counts_returns_name_and_count(store, mock_client):
     mock_client.table.return_value.select.return_value.is_.return_value.not_.is_.return_value.execute.return_value.data = [
         {"venue_name": "Park A"},

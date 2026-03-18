@@ -236,6 +236,62 @@ def _render_enriched_venues(store: VenueStore) -> None:
     _render_venue_expanders(store, venues)
 
 
+def _render_unenriched_tab(store: VenueStore) -> None:
+    """Show unenriched venue names with a manual save form."""
+    venues = store.get_unenriched_with_counts()
+    if not venues:
+        st.success("All venue names have been enriched.")
+        return
+
+    st.caption(f"{len(venues)} venue name(s) pending enrichment, sorted by league count.")
+
+    for item in venues:
+        name = item["venue_name"]
+        count = item["league_count"]
+        with st.expander(f"{name}  ({count} league(s))", expanded=False):
+            # Show associated leagues for context
+            leagues = store.get_leagues_for_venue_name(name)
+            if leagues:
+                st.markdown("**Leagues referencing this venue:**")
+                for lg in leagues:
+                    st.markdown(
+                        f"- **{lg.get('sport_name', '?')}** · "
+                        f"{lg.get('organization_name', '?')} · "
+                        f"{lg.get('season_name', '?')} · "
+                        f"{lg.get('day_of_week', '?')}"
+                    )
+            st.divider()
+
+            # Manual save form
+            with st.form(key=f"manual_{name}"):
+                google_name = st.text_input("Google Name (display label)", value=name)
+                address = st.text_input("Address")
+                col_lat, col_lng = st.columns(2)
+                lat = col_lat.number_input("Latitude", value=0.0, format="%.6f")
+                lng = col_lng.number_input("Longitude", value=0.0, format="%.6f")
+                place_id = st.text_input("Google Place ID (optional)")
+                submitted = st.form_submit_button("Save & Link Leagues")
+
+            if submitted:
+                if not address.strip():
+                    st.error("Address is required.")
+                else:
+                    venue_id = store.save_venue(
+                        venue_name=name,
+                        google_name=google_name.strip() or None,
+                        address=address.strip(),
+                        lat=lat if lat != 0.0 else None,
+                        lng=lng if lng != 0.0 else None,
+                        google_place_id=place_id.strip() or None,
+                        confidence_score=100,
+                        raw_api_response={},
+                    )
+                    store.toggle_verified(venue_id, True)
+                    linked = store.link_leagues(venue_id, name)
+                    st.success(f"Saved and linked {linked} league(s).")
+                    st.rerun()
+
+
 def render():
     st.title("📍 Venues Enricher")
     st.markdown("Resolve venue names to structured addresses via Google Places API.")
@@ -281,10 +337,13 @@ def render():
     st.divider()
 
     # ── Tabs ──────────────────────────────────────────────────────
-    tab_all, tab_enriched = st.tabs(["All Venues", "Enriched Venues"])
+    tab_all, tab_enriched, tab_unenriched = st.tabs(["All Venues", "Enriched Venues", "Unenriched Venues"])
 
     with tab_all:
         _render_all_venues(store)
 
     with tab_enriched:
         _render_enriched_venues(store)
+
+    with tab_unenriched:
+        _render_unenriched_tab(store)

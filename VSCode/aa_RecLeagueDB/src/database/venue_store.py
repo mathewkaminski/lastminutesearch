@@ -381,6 +381,19 @@ class VenueStore:
         )
         return result.data
 
+    def get_leagues_for_venue_name(self, venue_name: str) -> list[dict]:
+        """Return league rows matching a venue_name (used for unenriched venues)."""
+        result = (
+            self.client.table("leagues_metadata")
+            .select(
+                "league_id, organization_name, sport_name, season_name, day_of_week"
+            )
+            .ilike("venue_name", venue_name)
+            .order("day_of_week")
+            .execute()
+        )
+        return result.data
+
     def update_google_name(self, venue_id: str, google_name: str | None) -> None:
         """Update the display label for a venue."""
         self.client.table("venues").update({

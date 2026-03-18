@@ -109,3 +109,33 @@ def test_get_league_stats_aggregates_correctly(store, mock_client):
     assert stats["uuid-1"]["avg_team_fee"] == 150.0
     assert stats["uuid-1"]["avg_individual_fee"] is None
     assert "7:00 PM" in stats["uuid-1"]["hours"]
+
+
+def test_save_venue_drops_google_place_id_when_belongs_to_different_venue(store):
+    """Two venue names resolve to the same Google Place — don't violate unique constraint."""
+    client = MagicMock()
+    store = VenueStore(client=client)
+
+    # Found by venue_name
+    client.table.return_value.select.return_value.ilike.return_value.limit.return_value.execute.return_value.data = [
+        {"venue_id": "uuid-A"}
+    ]
+    # google_place_id belongs to a DIFFERENT venue
+    client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = [
+        {"venue_id": "uuid-B"}
+    ]
+    client.table.return_value.update.return_value.eq.return_value.execute.return_value.data = []
+
+    store.save_venue(
+        venue_name="Centennial Park Field 1",
+        google_name="Centennial Park",
+        address="100 Main St, Toronto, ON M1A 1A1, Canada",
+        lat=43.7,
+        lng=-79.4,
+        google_place_id="ChIJ_conflict",
+        confidence_score=70,
+        raw_api_response={},
+    )
+
+    update_payload = client.table.return_value.update.call_args[0][0]
+    assert "google_place_id" not in update_payload

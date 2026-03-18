@@ -65,6 +65,17 @@ class VenueStore:
 
         if existing.data:
             venue_id = existing.data[0]["venue_id"]
+            # If google_place_id belongs to a different row, don't overwrite it
+            if google_place_id:
+                by_place = (
+                    self.client.table("venues")
+                    .select("venue_id")
+                    .eq("google_place_id", google_place_id)
+                    .limit(1)
+                    .execute()
+                )
+                if by_place.data and by_place.data[0]["venue_id"] != venue_id:
+                    data.pop("google_place_id", None)
             self.client.table("venues").update(data).eq("venue_id", venue_id).execute()
             return venue_id
 

@@ -39,6 +39,14 @@ def _get_store() -> VenueStore:
     return VenueStore(client=get_client())
 
 
+def _get_places_client() -> PlacesClient:
+    api_key = os.environ.get("GOOGLE_PLACES_API_KEY")
+    if not api_key:
+        st.error("GOOGLE_PLACES_API_KEY not set in .env")
+        st.stop()
+    return PlacesClient(api_key=api_key)
+
+
 def _render_all_venues(store: VenueStore) -> None:
     venues = store.get_all_venues()
     if not venues:
@@ -237,7 +245,7 @@ def _render_enriched_venues(store: VenueStore) -> None:
 
 
 def _render_unenriched_tab(store: VenueStore) -> None:
-    """Show unenriched venue names with a manual save form."""
+    """Show unenriched venue names with a two-step resolve + save form."""
     venues = store.get_unenriched_with_counts()
     if not venues:
         st.success("All venue names have been enriched.")
@@ -249,7 +257,7 @@ def _render_unenriched_tab(store: VenueStore) -> None:
         name = item["venue_name"]
         count = item["league_count"]
         with st.expander(f"{name}  ({count} league(s))", expanded=False):
-            # Show associated leagues for context
+            # ── League context ────────────────────────────────────
             leagues = store.get_leagues_for_venue_name(name)
             if leagues:
                 st.markdown("**Leagues referencing this venue:**")
@@ -262,20 +270,69 @@ def _render_unenriched_tab(store: VenueStore) -> None:
                     )
             st.divider()
 
-            # Manual save form
-            with st.form(key=f"manual_{name}"):
-                google_name = st.text_input("Google Name (display label)", value=name)
-                address = st.text_input("Address")
-                col_lat, col_lng = st.columns(2)
-                lat = col_lat.number_input("Latitude", value=0.0, format="%.6f")
-                lng = col_lng.number_input("Longitude", value=0.0, format="%.6f")
-                place_id = st.text_input("Google Place ID (optional)")
-                submitted = st.form_submit_button("Save & Link Leagues")
-
-            if submitted:
+            # ── Step 1: Address input + Resolve button ────────────
+            address = st.text_input("Address", key=f"addr_{name}")
+            if st.button("Resolve Address", key=f"resolve_{name}"):
                 if not address.strip():
-                    st.error("Address is required.")
+                    st.error("Enter an address first.")
                 else:
+                    places = _get_places_client()
+                    result = places.search(address.strip())
+                    st.session_state[f"resolved_{name}"] = result  # None if no result
+
+            # ── Step 2: Show result or fallback ──────────────────
+            resolved_key = f"resolved_{name}"
+
+            if resolved_key not in st.session_state:
+                # Nothing resolved yet — nothing more to show
+                pass
+
+            elif st.session_state[resolved_key] is not None:
+                # Happy path: Places returned a result
+                r = st.session_state[resolved_key]
+                st.success(
+                    f"**Found:** {r['name']}  \n"
+                    f"{r['formatted_address']}  \n"
+                    f"Lat: {r['lat']}, Lng: {r['lng']}  \n"
+                    f"Place ID: {r['place_id']}"
+                )
+
+                with st.form(key=f"confirm_{name}"):
+                    google_name = st.text_input(
+                        "Google Name (editable)", value=r["name"] or name
+                    )
+                    submitted = st.form_submit_button("Save & Link Leagues")
+
+                if submitted:
+                    venue_id = store.save_venue(
+                        venue_name=name,
+                        google_name=google_name.strip() or None,
+                        address=r["formatted_address"],
+                        lat=r["lat"],
+                        lng=r["lng"],
+                        google_place_id=r["place_id"],
+                        confidence_score=100,
+                        raw_api_response=r.get("raw", {}),
+                    )
+                    store.toggle_verified(venue_id, True)
+                    linked = store.link_leagues(venue_id, name)
+                    del st.session_state[resolved_key]
+                    st.success(f"Saved and linked {linked} league(s).")
+                    st.rerun()
+
+            else:
+                # No Places result — show manual fallback
+                st.warning("No result found for that address. Enter coordinates manually.")
+
+                with st.form(key=f"manual_{name}"):
+                    google_name = st.text_input("Google Name (display label)", value=name)
+                    col_lat, col_lng = st.columns(2)
+                    lat = col_lat.number_input("Latitude", value=0.0, format="%.6f")
+                    lng = col_lng.number_input("Longitude", value=0.0, format="%.6f")
+                    place_id = st.text_input("Google Place ID (optional)")
+                    submitted = st.form_submit_button("Save & Link Leagues")
+
+                if submitted:
                     venue_id = store.save_venue(
                         venue_name=name,
                         google_name=google_name.strip() or None,
@@ -288,6 +345,7 @@ def _render_unenriched_tab(store: VenueStore) -> None:
                     )
                     store.toggle_verified(venue_id, True)
                     linked = store.link_leagues(venue_id, name)
+                    del st.session_state[resolved_key]
                     st.success(f"Saved and linked {linked} league(s).")
                     st.rerun()
 

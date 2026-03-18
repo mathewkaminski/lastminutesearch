@@ -84,6 +84,85 @@ def _render_all_venues(store: VenueStore) -> None:
             st.info("No changes detected.")
 
 
+def _render_venue_expanders(store: VenueStore, venues: list[dict]) -> None:
+    """Render one st.expander per venue with league details, stats, and verified toggle."""
+    venue_ids = [v["venue_id"] for v in venues]
+    league_stats = store.get_league_stats_for_venues(venue_ids)
+
+    for v in venues:
+        vid = v["venue_id"]
+        verified = v.get("manually_verified", False)
+        verified_icon = "✓" if verified else "○"
+        stats = league_stats.get(vid, {})
+        n_leagues = stats.get("num_leagues", 0)
+        conf = v.get("confidence_score", 0)
+
+        label = (
+            f"{verified_icon}  {v.get('google_name') or v.get('venue_name')}  "
+            f"· {v.get('city', '')} {v.get('province', '')}  "
+            f"· {n_leagues} league(s)  · conf {conf}"
+        )
+
+        with st.expander(label, expanded=False):
+            col_info, col_actions = st.columns([3, 1])
+
+            with col_info:
+                st.caption(f"**Address:** {v.get('address', '—')}")
+                if v.get("court_type_broad"):
+                    st.caption(
+                        f"**Court:** {v['court_type_broad']} / {v.get('court_type_specific', '—')}"
+                    )
+                sports_str = (
+                    ", ".join(v["sports"]) if isinstance(v.get("sports"), list)
+                    else (v.get("sports") or "—")
+                )
+                st.caption(f"**Sports:** {sports_str}")
+                if stats.get("avg_team_fee") is not None:
+                    st.caption(f"**Avg Team Fee:** ${stats['avg_team_fee']:.0f}")
+                if stats.get("avg_individual_fee") is not None:
+                    st.caption(f"**Avg Indiv. Fee:** ${stats['avg_individual_fee']:.0f}")
+                if stats.get("hours"):
+                    st.caption(f"**Hours:** {', '.join(stats['hours'])}")
+
+            with col_actions:
+                # Google Name editing
+                new_name = st.text_input(
+                    "Google Name",
+                    value=v.get("google_name") or "",
+                    key=f"gname_{vid}",
+                )
+                if st.button("Save Name", key=f"save_{vid}"):
+                    if new_name.strip() != (v.get("google_name") or ""):
+                        store.update_google_name(vid, new_name.strip() or None)
+                        st.success("Saved.")
+                        st.rerun()
+
+                # Verified toggle
+                btn_label = "Un-verify" if verified else "Mark Verified"
+                if st.button(btn_label, key=f"verify_{vid}"):
+                    store.toggle_verified(vid, not verified)
+                    st.rerun()
+
+            # League sub-list
+            leagues = store.get_leagues_for_venue(vid)
+            if leagues:
+                st.markdown("**Leagues at this venue:**")
+                for lg in leagues:
+                    exclusions = ""
+                    if lg.get("stat_holidays"):
+                        dates = ", ".join(h.get("date", "") for h in lg["stat_holidays"])
+                        exclusions = f" *(excl: {dates})*"
+                    st.markdown(
+                        f"- **{lg.get('sport_name', '?')}** · "
+                        f"{lg.get('organization_name', '?')} · "
+                        f"{lg.get('season_name', '?')} · "
+                        f"{lg.get('day_of_week', '?')}"
+                        f"{exclusions}"
+                    )
+            else:
+                st.caption("No leagues linked yet.")
+
+
 def _render_enriched_venues(store: VenueStore) -> None:
     # ── Classify button ───────────────────────────────────────────
     unclassified = store.get_venues_for_classification()
@@ -132,12 +211,13 @@ def _render_enriched_venues(store: VenueStore) -> None:
         if s
     })
 
-    fc1, fc2, fc3, fc4, fc5 = st.columns([1, 1, 1, 1, 1])
+    fc1, fc2, fc3, fc4, fc5, fc6 = st.columns([1, 1, 1, 1, 1, 1])
     broad_filter = fc1.selectbox("Broad Type", broad_options, key="f_broad")
     specific_filter = fc2.selectbox("Specific Type", specific_options, key="f_specific")
     province_filter = fc3.selectbox("Province", province_options, key="f_province")
     city_filter = fc4.text_input("City", key="f_city")
     sport_filter = fc5.selectbox("Sport", sport_options, key="f_sport")
+    season_filter = fc6.text_input("Season", key="f_season")
 
     venues = store.get_enriched_venues(
         broad=broad_filter or None,
@@ -145,70 +225,15 @@ def _render_enriched_venues(store: VenueStore) -> None:
         province=province_filter or None,
         city=city_filter.strip() or None,
         sport=sport_filter or None,
+        season=season_filter.strip() or None,
     )
 
     if not venues:
         st.write("No venues match the current filters.")
         return
 
-    # ── League stats ──────────────────────────────────────────────
-    venue_ids = [v["venue_id"] for v in venues]
-    league_stats = store.get_league_stats_for_venues(venue_ids)
-
-    df = pd.DataFrame(venues)
-    df["# Leagues"] = df["venue_id"].map(lambda vid: league_stats.get(vid, {}).get("num_leagues", 0))
-    df["Avg Team Fee"] = df["venue_id"].map(lambda vid: league_stats.get(vid, {}).get("avg_team_fee"))
-    df["Avg Indiv. Fee"] = df["venue_id"].map(lambda vid: league_stats.get(vid, {}).get("avg_individual_fee"))
-    df["Hours"] = df["venue_id"].map(
-        lambda vid: ", ".join(league_stats.get(vid, {}).get("hours", []))
-    )
-
-    for col in ("sports", "days_of_week"):
-        if col in df.columns:
-            df[col] = df[col].apply(
-                lambda v: ", ".join(v) if isinstance(v, list) else (v or "")
-            )
-
-    st.caption(f"{len(df)} venue(s) shown")
-
-    edited = st.data_editor(
-        df,
-        column_config={
-            "venue_id": None,
-            "venue_name": None,
-            "manually_verified": None,
-            "google_name": st.column_config.TextColumn("Google Name", width="medium"),
-            "city": st.column_config.TextColumn("City", disabled=True, width="small"),
-            "province": st.column_config.TextColumn("Prov.", disabled=True, width="small"),
-            "address": st.column_config.TextColumn("Address", disabled=True, width="large"),
-            "confidence_score": st.column_config.NumberColumn("Conf.", disabled=True, width="small"),
-            "court_type_broad": st.column_config.TextColumn("Broad", disabled=True, width="small"),
-            "court_type_broad_conf": st.column_config.NumberColumn("B.Conf", disabled=True, width="small"),
-            "court_type_specific": st.column_config.TextColumn("Specific", disabled=True, width="medium"),
-            "court_type_specific_conf": st.column_config.NumberColumn("S.Conf", disabled=True, width="small"),
-            "sports": st.column_config.TextColumn("Sports", disabled=True, width="medium"),
-            "days_of_week": st.column_config.TextColumn("Days", disabled=True, width="medium"),
-            "# Leagues": st.column_config.NumberColumn("# Leagues", disabled=True, width="small"),
-            "Avg Team Fee": st.column_config.NumberColumn("Avg Team $", disabled=True, format="$%.0f", width="small"),
-            "Avg Indiv. Fee": st.column_config.NumberColumn("Avg Indiv. $", disabled=True, format="$%.0f", width="small"),
-            "Hours": st.column_config.TextColumn("Hours", disabled=True, width="medium"),
-        },
-        hide_index=True,
-        use_container_width=True,
-        key="enriched_venues_table",
-    )
-
-    if st.button("💾 Save Name Changes", key="save_enriched"):
-        orig = df.set_index("venue_id")["google_name"]
-        updated = edited.set_index("venue_id")["google_name"]
-        changed = orig[orig != updated].index.tolist()
-        if changed:
-            for vid in changed:
-                store.update_google_name(vid, updated[vid] or None)
-            st.success(f"Saved {len(changed)} name change(s).")
-            st.rerun()
-        else:
-            st.info("No changes detected.")
+    st.caption(f"{len(venues)} venue(s) shown")
+    _render_venue_expanders(store, venues)
 
 
 def render():

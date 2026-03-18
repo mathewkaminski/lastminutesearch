@@ -111,6 +111,23 @@ def test_get_league_stats_aggregates_correctly(store, mock_client):
     assert "7:00 PM" in stats["uuid-1"]["hours"]
 
 
+def test_get_leagues_for_venue_returns_rows(store, mock_client):
+    mock_client.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value.data = [
+        {
+            "league_id": "lg-1",
+            "organization_name": "Ottawa Rec",
+            "sport_name": "Soccer",
+            "season_name": "Fall 2025",
+            "day_of_week": "Wednesday",
+            "stat_holidays": [{"date": "2025-10-13", "reason": "Thanksgiving"}],
+        }
+    ]
+    results = store.get_leagues_for_venue("uuid-1")
+    assert len(results) == 1
+    assert results[0]["sport_name"] == "Soccer"
+    assert results[0]["season_name"] == "Fall 2025"
+
+
 def test_save_venue_drops_google_place_id_when_belongs_to_different_venue(store):
     """Two venue names resolve to the same Google Place — don't violate unique constraint."""
     client = MagicMock()

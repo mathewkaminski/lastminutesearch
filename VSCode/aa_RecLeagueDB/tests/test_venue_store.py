@@ -15,8 +15,8 @@ def store(mock_client):
 
 
 def test_save_venue_inserts_when_no_existing(store, mock_client):
-    # No existing venue found by name+city
-    mock_client.table.return_value.select.return_value.ilike.return_value.ilike.return_value.limit.return_value.execute.return_value.data = []
+    # No existing venue found by name
+    mock_client.table.return_value.select.return_value.ilike.return_value.limit.return_value.execute.return_value.data = []
     # No existing venue found by google_place_id (fallback)
     mock_client.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value.data = []
     # Insert returns new venue_id
@@ -24,7 +24,6 @@ def test_save_venue_inserts_when_no_existing(store, mock_client):
 
     venue_id = store.save_venue(
         venue_name="Ashbridges Bay Park",
-        city="Toronto",
         google_name="Ashbridges Bay Park",
         address="1561 Lake Shore Blvd E, Toronto, ON M4L 3W6, Canada",
         lat=43.6632,
@@ -38,13 +37,12 @@ def test_save_venue_inserts_when_no_existing(store, mock_client):
 
 
 def test_link_leagues_updates_matching_rows(store, mock_client):
-    mock_client.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.return_value.data = [
+    mock_client.table.return_value.update.return_value.eq.return_value.execute.return_value.data = [
         {}, {}
     ]
     count = store.link_leagues(
         venue_id="uuid-123",
         venue_name="Ashbridges Bay Park",
-        city="Toronto",
     )
     assert count == 2
 
@@ -65,14 +63,16 @@ def test_accept_venue_sets_manually_verified(store, mock_client):
     assert update_call["manually_verified"] is True
 
 
-def test_get_unenriched_pairs_returns_distinct_pairs(store, mock_client):
-    mock_client.table.return_value.select.return_value.is_.return_value.not_.is_.return_value.not_.is_.return_value.execute.return_value.data = [
-        {"venue_name": "Park A", "city": "Toronto"},
-        {"venue_name": "Park B", "city": "Ottawa"},
+def test_get_unenriched_venue_names_returns_distinct_names(store, mock_client):
+    mock_client.table.return_value.select.return_value.is_.return_value.not_.is_.return_value.execute.return_value.data = [
+        {"venue_name": "Park A"},
+        {"venue_name": "Park B"},
+        {"venue_name": "Park A"},
     ]
-    pairs = store.get_unenriched_pairs()
-    assert len(pairs) == 2
-    assert ("Park A", "Toronto") in pairs
+    names = store.get_unenriched_venue_names()
+    assert len(names) == 2
+    assert "Park A" in names
+    assert "Park B" in names
 
 
 def test_get_venues_for_classification_filters_correctly(store, mock_client):

@@ -7,10 +7,10 @@ SPORTS_TYPES = {
     "establishment", "point_of_interest",
 }
 
-AUTO_SAVE_THRESHOLD = 75
+AUTO_SAVE_THRESHOLD = 60
 
 
-def score(venue_name: str, city: str, api_result: dict | None) -> int:
+def score(venue_name: str, city: str | None, api_result: dict | None) -> int:
     """Calculate confidence score 0-100 for a Places API result.
 
     Args:
@@ -40,8 +40,10 @@ def _name_score(searched: str, returned: str) -> int:
     return round(ratio * 40)
 
 
-def _city_score(city: str, formatted_address: str) -> int:
+def _city_score(city: str | None, formatted_address: str) -> int:
     """0 or 30 points: city appears in returned address."""
+    if not city:
+        return 0
     return 30 if city.lower() in formatted_address.lower() else 0
 
 

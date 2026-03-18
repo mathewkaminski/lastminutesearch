@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class VenueStore:
-    REVIEW_THRESHOLD = 75
+    REVIEW_THRESHOLD = 60
 
     def __init__(self, client):
         """Args:
@@ -25,7 +25,6 @@ class VenueStore:
     def save_venue(
         self,
         venue_name: str,
-        city: str,
         google_name: str | None,
         address: str | None,
         lat: float | None,
@@ -36,11 +35,12 @@ class VenueStore:
     ) -> str:
         """Insert or update a venue record. Returns venue_id.
 
-        Looks up by (venue_name, city) first to avoid hitting the
-        idx_venues_name_city unique constraint when re-enriching unlinked venues
-        that already have a row (e.g. previously queued for review).
+        Looks up by venue_name first to avoid hitting the idx_venues_name
+        unique constraint when re-enriching venues. City is derived from
+        the Google Places address, not the campaign city.
         """
         province = self._extract_province(address)
+        city = self._extract_city(address)
         data = {
             "venue_name": venue_name,
             "city": city,
@@ -59,7 +59,6 @@ class VenueStore:
             self.client.table("venues")
             .select("venue_id")
             .ilike("venue_name", venue_name)
-            .ilike("city", city)
             .limit(1)
             .execute()
         )
@@ -94,8 +93,24 @@ class VenueStore:
         m = _PROVINCE_RE.search(address)
         return m.group(1) if m else None
 
-    def link_leagues(self, venue_id: str, venue_name: str, city: str) -> int:
-        """Set venue_id on all leagues with matching venue_name + city.
+    @staticmethod
+    def _extract_city(address: str | None) -> str | None:
+        """Extract city from a Google Places formatted address.
+
+        Expects format like '123 Main St, Toronto, ON M5V 2T6, Canada'.
+        City is the comma-separated segment immediately before the province.
+        """
+        if not address:
+            return None
+        m = _PROVINCE_RE.search(address)
+        if not m:
+            return None
+        before = address[:m.start()]
+        parts = [p.strip() for p in before.split(",")]
+        return parts[-1] if parts else None
+
+    def link_leagues(self, venue_id: str, venue_name: str) -> int:
+        """Set venue_id on all leagues with matching venue_name (any city).
 
         Also aggregates distinct sports and days_of_week from linked leagues
         and writes them back to the venue record.
@@ -104,7 +119,6 @@ class VenueStore:
             self.client.table("leagues_metadata")
             .update({"venue_id": venue_id})
             .eq("venue_name", venue_name)
-            .eq("city", city)
             .execute()
         )
         linked = result.data or []
@@ -130,24 +144,23 @@ class VenueStore:
 
         return len(linked)
 
-    def get_unenriched_pairs(self) -> list[tuple[str, str]]:
-        """Return distinct (venue_name, city) pairs not yet linked to a venue."""
+    def get_unenriched_venue_names(self) -> list[str]:
+        """Return distinct venue_names not yet linked to a venue."""
         result = (
             self.client.table("leagues_metadata")
-            .select("venue_name, city")
+            .select("venue_name")
             .is_("venue_id", "null")
             .not_.is_("venue_name", "null")
-            .not_.is_("city", "null")
             .execute()
         )
         seen = set()
-        pairs = []
+        names = []
         for row in result.data:
-            key = (row["venue_name"], row["city"])
-            if key not in seen:
-                seen.add(key)
-                pairs.append(key)
-        return pairs
+            name = row["venue_name"]
+            if name not in seen:
+                seen.add(name)
+                names.append(name)
+        return names
 
     def get_enrichment_stats(self) -> dict:
         """Return counts for the Streamlit stats panel."""
@@ -158,8 +171,8 @@ class VenueStore:
             .execute()
         ).data
 
-        total = len({(r["venue_name"], r.get("city")) for r in all_rows})
-        enriched = len({(r["venue_name"], r.get("city")) for r in all_rows if r.get("venue_id")})
+        total = len({r["venue_name"] for r in all_rows})
+        enriched = len({r["venue_name"] for r in all_rows if r.get("venue_id")})
 
         review_queue = (
             self.client.table("venues")

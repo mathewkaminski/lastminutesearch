@@ -21,12 +21,12 @@ class PlacesClient:
     def __init__(self, api_key: str):
         self.api_key = api_key
 
-    def search(self, venue_name: str, city: str) -> dict | None:
-        """Search for a venue by name and city.
+    def search(self, venue_name: str, city: str | None = None) -> dict | None:
+        """Search for a venue by name, optionally scoped to a city.
 
         Args:
             venue_name: Venue name from leagues_metadata.
-            city: City context from search pipeline.
+            city: Optional city context (appended to query if provided).
 
         Returns:
             Normalized result dict, or None if no results found.
@@ -34,7 +34,7 @@ class PlacesClient:
         Raises:
             PlacesAPIError: On API-level errors (bad key, quota exceeded).
         """
-        query = f"{venue_name} {city}"
+        query = f"{venue_name} {city}" if city else venue_name
         params = {"query": query, "key": self.api_key}
 
         for attempt in range(self.MAX_RETRIES):

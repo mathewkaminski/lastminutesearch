@@ -34,9 +34,9 @@ def mock_places():
 @pytest.fixture
 def mock_store():
     store = MagicMock()
-    store.get_unenriched_pairs.return_value = [
-        ("Ashbridges Bay Park", "Toronto"),
-        ("Ashbridges Bay", "Toronto"),
+    store.get_unenriched_venue_names.return_value = [
+        "Ashbridges Bay Park",
+        "Ashbridges Bay",
     ]
     store.save_venue.return_value = "uuid-new"
     return store
@@ -48,12 +48,20 @@ def enricher(mock_places, mock_store):
 
 
 def test_high_confidence_result_auto_saves(enricher, mock_places, mock_store):
+    # Without city, max score is 70 (name 40 + type 20 + ratings 10).
+    # Mock confidence_score to return above threshold for this test.
     mock_places.search.return_value = GOOD_RESULT
-    summary = enricher.run()
-    assert summary["auto_saved"] == 2
-    assert summary["queued_review"] == 0
-    mock_store.save_venue.assert_called()
-    mock_store.link_leagues.assert_called()
+    import src.enrichers.venue_enricher as mod
+    original = mod.confidence_score
+    mod.confidence_score = lambda name, city, result: 80
+    try:
+        summary = enricher.run()
+        assert summary["auto_saved"] == 2
+        assert summary["queued_review"] == 0
+        mock_store.save_venue.assert_called()
+        mock_store.link_leagues.assert_called()
+    finally:
+        mod.confidence_score = original
 
 
 def test_low_confidence_result_goes_to_review(enricher, mock_places, mock_store):

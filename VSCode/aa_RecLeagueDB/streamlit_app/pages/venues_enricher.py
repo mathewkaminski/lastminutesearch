@@ -6,7 +6,7 @@ import streamlit as st
 from anthropic import Anthropic
 from src.database.supabase_client import get_client
 from src.database.venue_store import VenueStore
-from src.enrichers.places_client import PlacesClient
+from src.enrichers.places_client import PlacesAPIError, PlacesClient
 from src.enrichers.venue_enricher import VenueEnricher
 from src.enrichers.court_type_classifier import CourtTypeClassifier
 from src.enrichers.court_type_enricher import CourtTypeEnricher
@@ -277,7 +277,11 @@ def _render_unenriched_tab(store: VenueStore) -> None:
                     st.error("Enter an address first.")
                 else:
                     places = _get_places_client()
-                    result = places.search(address.strip())
+                    try:
+                        result = places.search(address.strip())
+                    except PlacesAPIError as e:
+                        st.error(f"Google Places API error: {e}")
+                        result = None
                     st.session_state[f"resolved_{name}"] = result  # None if no result
 
             # ── Step 2: Show result or fallback ──────────────────

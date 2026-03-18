@@ -31,7 +31,11 @@ class VenueEnricher:
             if progress_callback:
                 progress_callback(i, len(names))
 
-            outcome = self._process_venue(venue_name)
+            try:
+                outcome = self._process_venue(venue_name)
+            except Exception as e:
+                logger.error(f"Unexpected error for '{venue_name}': {e}")
+                outcome = "failed"
             if outcome == "auto_saved":
                 auto_saved += 1
             elif outcome == "queued":

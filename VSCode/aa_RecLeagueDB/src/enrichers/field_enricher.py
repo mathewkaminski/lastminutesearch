@@ -2,9 +2,12 @@
 
 Flow per URL:
   1. Fetch leagues for URL → identify null enrichable fields
-  2. Pull latest page snapshot from page_snapshots by domain
-  3. If snapshot: run targeted Claude extraction → write back hits
-  4. If no snapshot or nothing extracted: Firecrawl URL → repeat step 3
+  2. Try URL-specific Playwright cache → extract from YAML + full_text
+  3. Cache miss: live Playwright fetch → extract from YAML + full_text
+     Exception: return error results
+  4. Mini-crawl for still-missing fields
+  5. Done — report filled / skipped fields
+  (Optional) use_firecrawl=True: Firecrawl explicit mode
 """
 from __future__ import annotations
 
@@ -12,19 +15,17 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from urllib.parse import urlparse
 
 import yaml as _yaml
 
 import anthropic
 
 from src.database.supabase_client import get_client
-from src.database.snapshot_store import get_snapshots_by_domain
 from src.database.validators import calculate_quality_score
 from src.scraper.firecrawl_client import FirecrawlClient
 from src.extractors.gap_reporter import map_fields_to_categories
 from src.scraper.yaml_link_parser import extract_navigation_links, infer_link_category
-from src.scraper.playwright_yaml_fetcher import fetch_page_as_yaml
+from src.scraper.playwright_yaml_fetcher import fetch_page_as_yaml, load_yaml_from_cache
 from src.extractors.yaml_extractor import extract_league_data_from_yaml
 
 logger = logging.getLogger(__name__)
@@ -48,12 +49,12 @@ class FieldEnrichResult:
     org_name: str
     filled_fields: list[str] = field(default_factory=list)
     skipped_fields: list[str] = field(default_factory=list)
-    source: str = "none"          # "cache" | "firecrawl" | "none"
+    source: str = "none"          # "cache" | "playwright" | "firecrawl" | "none"
     error: str | None = None
 
 
 class FieldEnricher:
-    """Enriches null fields on leagues_metadata using cached snapshots and Firecrawl."""
+    """Enriches null fields on leagues_metadata using Playwright and optionally Firecrawl."""
 
     def __init__(
         self,
@@ -67,16 +68,17 @@ class FieldEnricher:
 
     # ── public ────────────────────────────────────────────────────────────────
 
-    def enrich_url(self, url: str) -> list[FieldEnrichResult]:
+    def enrich_url(self, url: str, use_firecrawl: bool = False) -> list[FieldEnrichResult]:
         """Enrich all leagues at a URL. Returns one result per league.
 
         Flow:
           1. Fetch league records for URL
           2. Build union of null fields across all leagues
           3. Short-circuit if nothing to fill
-          4. Try extraction from cached snapshot
-          5. Firecrawl fallback if no snapshot or extraction returned nothing
-          6. Write back hits; record skipped fields
+          4. Try URL-specific Playwright cache; on miss, fetch live via Playwright
+          5. Mini-crawl for still-missing fields
+          6. If use_firecrawl=True: explicit Firecrawl extraction
+          7. Write back hits; record skipped fields
         """
         # Step 1: fetch leagues
         response = (
@@ -114,42 +116,28 @@ class FieldEnricher:
                 for lg in leagues
             ]
 
-        # Step 4: try extraction from cached snapshot
-        from src.utils.domain_extractor import extract_base_domain
-        domain = extract_base_domain(url)
-        snapshots = get_snapshots_by_domain(domain)
-        snapshot_content = snapshots[0]["content"] if snapshots else None
-
+        # Step 4: URL-specific Playwright cache, then live Playwright fallback
         patches: list[dict] = []
         source = "none"
 
-        if snapshot_content:
-            patches = self._extract(snapshot_content, all_null_fields, leagues)
+        cached_yaml, cached_meta = load_yaml_from_cache(url)
+        if cached_yaml:
+            full_text = (cached_meta or {}).get("full_text", "")
+            patches = self._extract(cached_yaml, all_null_fields, leagues, full_text=full_text)
             if patches:
                 source = "cache"
-
-        # Stage 2: mini-crawl for fields still missing after snapshot
-        snapshot_field_names = {
-            k for p in patches for k in p.keys() if k != "league_id"
-        }
-        still_missing = [f for f in all_null_fields if f not in snapshot_field_names]
-        mini_patches: dict = {}
-        if still_missing:
-            mini_patches = self._mini_crawl_for_fields(url, still_missing)
-
-        still_missing_after_mini = [f for f in still_missing if f not in mini_patches]
-
-        # Step 5: Firecrawl fallback if no snapshot or empty extraction and fields still missing
-        if not patches and still_missing_after_mini:
-            api_key = os.environ.get("FIRECRAWL_API_KEY", "")
+        else:
+            # Cache miss: fetch live via Playwright
             try:
-                fc = FirecrawlClient(api_key=api_key)
-                fc_content = fc.scrape(url)
-                patches = self._extract(fc_content, all_null_fields, leagues)
+                live_yaml, live_meta = fetch_page_as_yaml(
+                    url, force_refresh=True, max_full_text_chars=40000
+                )
+                full_text = (live_meta or {}).get("full_text", "")
+                patches = self._extract(live_yaml, all_null_fields, leagues, full_text=full_text)
                 if patches:
-                    source = "firecrawl"
+                    source = "playwright"
             except Exception as exc:
-                logger.warning("Firecrawl fallback failed for %s: %s", url, exc)
+                logger.warning("Playwright fetch failed for %s: %s", url, exc)
                 return [
                     FieldEnrichResult(
                         league_id=lg["league_id"],
@@ -161,7 +149,41 @@ class FieldEnricher:
                     for lg in leagues
                 ]
 
-        # Step 6: write back and build results
+        # Step 5: mini-crawl for fields still missing after initial extraction
+        extracted_field_names = {
+            k for p in patches for k in p.keys() if k != "league_id"
+        }
+        still_missing = [f for f in all_null_fields if f not in extracted_field_names]
+        mini_patches: dict = {}
+        if still_missing:
+            mini_patches = self._mini_crawl_for_fields(url, still_missing)
+
+        still_missing_after_mini = [f for f in still_missing if f not in mini_patches]
+
+        # Step 6: explicit Firecrawl mode (opt-in only)
+        if use_firecrawl and still_missing_after_mini:
+            api_key = os.environ.get("FIRECRAWL_API_KEY", "")
+            try:
+                fc = FirecrawlClient(api_key=api_key)
+                fc_content = fc.scrape(url)
+                fc_patches = self._extract(fc_content, all_null_fields, leagues)
+                if fc_patches:
+                    patches = fc_patches
+                    source = "firecrawl"
+            except Exception as exc:
+                logger.warning("Firecrawl failed for %s: %s", url, exc)
+                return [
+                    FieldEnrichResult(
+                        league_id=lg["league_id"],
+                        org_name=lg.get("organization_name", ""),
+                        skipped_fields=league_null_map.get(lg["league_id"], []),
+                        source="none",
+                        error=str(exc),
+                    )
+                    for lg in leagues
+                ]
+
+        # Step 7: write back and build results
         patch_map: dict[str, dict] = {p.get("league_id", ""): p for p in patches}
 
         # Merge mini-crawl patches into patch_map
@@ -205,7 +227,9 @@ class FieldEnricher:
         """Return ENRICHABLE_FIELDS that are None on this league record."""
         return [f for f in ENRICHABLE_FIELDS if league.get(f) is None]
 
-    def _build_prompt(self, content: str, null_fields: list[str], leagues: list[dict]) -> str:
+    def _build_prompt(
+        self, content: str, null_fields: list[str], leagues: list[dict], full_text: str = ""
+    ) -> str:
         """Build a targeted extraction prompt for only the null fields."""
         # Build league context block
         context_lines = []
@@ -226,7 +250,10 @@ class FieldEnricher:
         return f"""You are a data extraction specialist for recreational sports leagues.
 
 TASK: Extract ONLY the fields listed in the OUTPUT SCHEMA from the page content below.
-Do not invent or guess values. Return null for any field not clearly stated on the page.
+
+CRITICAL: If a field's value is not EXPLICITLY and UNAMBIGUOUSLY stated on
+this page, you MUST return null. Do NOT infer, estimate, or fill in plausible
+values. When in doubt, return null.
 
 KNOWN LEAGUE CONTEXT (already in database — use to match divisions):
 {league_context}
@@ -241,18 +268,23 @@ OUTPUT SCHEMA — return a JSON array with one object per league:
 
 Return ONLY valid JSON. No other text.
 
-PAGE CONTENT:
+PAGE STRUCTURE (accessibility tree YAML):
 {content}
+
+PAGE TEXT (rendered plain text):
+{full_text}
 
 JSON Output:"""
 
-    def _extract(self, content: str, null_fields: list[str], leagues: list[dict]) -> list[dict]:
+    def _extract(
+        self, content: str, null_fields: list[str], leagues: list[dict], full_text: str = ""
+    ) -> list[dict]:
         """Call Claude to extract null fields from page content.
 
         Returns list of patch dicts with only non-null extracted values.
         Returns [] on any parse error.
         """
-        prompt = self._build_prompt(content, null_fields, leagues)
+        prompt = self._build_prompt(content, null_fields, leagues, full_text=full_text)
         try:
             message = self._anthropic.messages.create(
                 model="claude-haiku-4-5-20251001",
@@ -292,7 +324,7 @@ JSON Output:"""
 
         Args:
             url: Base URL to crawl from
-            missing_fields: Fields still null after snapshot extraction
+            missing_fields: Fields still null after initial extraction
             max_pages_per_category: Max pages to fetch per missing category (default 2)
 
         Returns:

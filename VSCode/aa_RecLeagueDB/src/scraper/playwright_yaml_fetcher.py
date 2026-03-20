@@ -44,7 +44,7 @@ EXTRACT_ACCESSIBILITY_TREE_JS = """
     const result = {
         role: role || element.tagName.toLowerCase(),
         name: element.getAttribute('aria-label') ||
-              (element.textContent && element.textContent.slice(0, 100).trim()) ||
+              (element.textContent && element.textContent.slice(0, 500).trim()) ||
               element.getAttribute('placeholder') ||
               element.getAttribute('title') || '',
     };

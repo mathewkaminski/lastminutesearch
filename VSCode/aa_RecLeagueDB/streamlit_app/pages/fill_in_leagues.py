@@ -93,11 +93,11 @@ def _run_teams(url: str, progress_callback) -> dict:
     return {"checks": result.checks}
 
 
-def _run_fill_fields(url: str, progress_callback) -> list:
+def _run_fill_fields(url: str, progress_callback, use_firecrawl: bool = False) -> list:
     from src.enrichers.field_enricher import FieldEnricher
     progress_callback(f"Running field enrichment for {url}...")
     enricher = FieldEnricher()
-    return enricher.enrich_url(url)
+    return enricher.enrich_url(url, use_firecrawl=use_firecrawl)
 
 
 def render():
@@ -106,20 +106,19 @@ def render():
 
     mode = st.radio(
         "Mode",
-        options=["Fill Fields", "Teams", "Deep-dive"],
+        options=["Fill Fields", "Teams", "Deep-dive", "Firecrawl"],
         horizontal=True,
     )
 
     mode_descriptions = {
-        "Fill Fields": "Fills null fields (venue, cost, schedule, policies) from cached snapshots. Falls back to Firecrawl if no cached content is found.",
+        "Fill Fields": "Fills null fields (venue, cost, schedule, policies) from URL-specific Playwright cache; fetches live if no cache hit.",
         "Teams": "Navigates standings pages to refresh num_teams counts.",
         "Deep-dive": "Full re-crawl of the site. Reconciles extracted leagues against existing DB records. Use for low-quality or stale records.",
+        "Firecrawl": "Fetches page via Firecrawl API and extracts missing fields. Use when Fill Fields returns no results.",
     }
     st.caption(mode_descriptions[mode])
-    st.divider()
 
-    # ── Load data ─────────────────────────────────────────────────────────
-    st.subheader("Select URLs")
+    # ── Load data (needed for button disabled check) ───────────────────
     try:
         url_rows = _get_url_rows()
     except Exception as e:
@@ -130,7 +129,19 @@ def render():
         st.info("No scraped leagues found. Run the scraper first.")
         return
 
-    # ── Filters ───────────────────────────────────────────────────────────
+    # Pre-compute selected count from session state for button disabled check
+    pre_selected_count = sum(
+        1 for r in url_rows if st.session_state.get(f"fill_{r['url']}", False)
+    )
+    run_clicked = st.button(
+        "Run Selected", disabled=pre_selected_count == 0, type="primary"
+    )
+    st.divider()
+
+    # ── Select URLs ────────────────────────────────────────────────────
+    st.subheader("Select URLs")
+
+    # ── Filters ───────────────────────────────────────────────────────
     with st.expander("Filters & Sorting", expanded=False):
         col_search, col_sort = st.columns([2, 1])
         with col_search:
@@ -172,7 +183,7 @@ def render():
 
     st.caption(f"Showing {len(filtered)} of {len(url_rows)} URLs")
 
-    # ── Bulk selection ────────────────────────────────────────────────────
+    # ── Bulk selection ────────────────────────────────────────────────
     col_all, col_none, col_below = st.columns(3)
     with col_all:
         if st.button("Select all"):
@@ -191,7 +202,7 @@ def render():
                 st.session_state[f"fill_{r['url']}"] = r["avg_quality"] < threshold
             st.rerun()
 
-    # ── URL list with checkboxes ──────────────────────────────────────────
+    # ── URL list with checkboxes ──────────────────────────────────────
     selected_urls: list[str] = []
     selected_rows: list[dict] = []
     for row in filtered:
@@ -206,7 +217,7 @@ def render():
             selected_urls.append(row["url"])
             selected_rows.append(row)
 
-    # ── Preview panel ─────────────────────────────────────────────────────
+    # ── Preview panel ─────────────────────────────────────────────────
     if selected_rows:
         with st.expander(f"Preview — {len(selected_rows)} URL(s) selected", expanded=False):
             for row in selected_rows:
@@ -221,10 +232,8 @@ def render():
                     })
                 st.dataframe(preview_data, use_container_width=True, hide_index=True)
 
-    st.divider()
-
-    # ── Run button ────────────────────────────────────────────────────────
-    if st.button("Run Selected", disabled=len(selected_urls) == 0, type="primary"):
+    # ── Run processing ────────────────────────────────────────────────
+    if run_clicked:
         progress = st.progress(0, text="Starting...")
         status = st.empty()
         all_results = []
@@ -242,6 +251,9 @@ def render():
                 elif mode == "Teams":
                     r = _run_teams(url, cb)
                     all_results.append({"url": url, "mode": mode, "data": r})
+                elif mode == "Firecrawl":
+                    r = _run_fill_fields(url, cb, use_firecrawl=True)
+                    all_results.append({"url": url, "mode": mode, "data": r})
                 else:
                     r = _run_fill_fields(url, cb)
                     all_results.append({"url": url, "mode": mode, "data": r})
@@ -254,7 +266,7 @@ def render():
         status.success(f"Done. Processed {len(all_results)} URL(s).")
         st.session_state["fill_results"] = all_results
 
-    # ── Results display ───────────────────────────────────────────────────
+    # ── Results display ───────────────────────────────────────────────
     if "fill_results" in st.session_state:
         st.divider()
         st.subheader("Results")
@@ -289,11 +301,14 @@ def render():
                         new_t = chk.get("new_num_teams", "–")
                         st.write(f"{status_icon} {label} — {old_t} → {new_t} teams")
 
-                elif mode_label == "Fill Fields" and isinstance(data, list):
+                elif mode_label in ("Fill Fields", "Firecrawl") and isinstance(data, list):
                     for res in data:
-                        source_badge = {"cache": "Cache", "firecrawl": "Firecrawl", "none": "No data"}.get(
-                            res.source, res.source
-                        )
+                        source_badge = {
+                            "cache": "Cache",
+                            "playwright": "Live Playwright",
+                            "firecrawl": "Firecrawl",
+                            "none": "No data",
+                        }.get(res.source, res.source)
                         filled = res.filled_fields
                         skipped = res.skipped_fields
 

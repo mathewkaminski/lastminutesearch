@@ -98,6 +98,21 @@ def test_build_prompt_includes_content(enricher):
     assert "UNIQUE_MARKER_XYZ" in prompt
 
 
+def test_build_prompt_includes_full_text(enricher):
+    """Prompt includes full_text when provided."""
+    leagues = [_make_league()]
+    prompt = enricher._build_prompt("yaml content", ["venue_name"], leagues, full_text="FULL_TEXT_MARKER")
+    assert "FULL_TEXT_MARKER" in prompt
+
+
+def test_build_prompt_null_instruction_is_strict(enricher):
+    """Prompt contains the CRITICAL null instruction."""
+    leagues = [_make_league()]
+    prompt = enricher._build_prompt("content", ["venue_name"], leagues)
+    assert "CRITICAL" in prompt
+    assert "null" in prompt.lower()
+
+
 # ── _extract ──────────────────────────────────────────────────────────────────
 
 def test_extract_returns_field_patches(enricher):
@@ -170,7 +185,7 @@ def _mock_db_leagues(enricher, leagues: list[dict]) -> None:
 
 
 def test_enrich_url_cache_hit_writes_back(enricher):
-    """Cache hit: snapshot found → extract → write_back called per league."""
+    """Cache hit: URL-specific YAML found → extract → write_back called per league."""
     league = _make_league()
     url = "https://ottawavolleysixes.com/register"
 
@@ -179,8 +194,8 @@ def test_enrich_url_cache_hit_writes_back(enricher):
     enricher._extract = MagicMock(return_value=patches)
     enricher._write_back = MagicMock()
 
-    snapshot = {"content": "Nepean Sportsplex content"}
-    with patch("src.enrichers.field_enricher.get_snapshots_by_domain", return_value=[snapshot]):
+    cached_meta = {"full_text": "Nepean Sportsplex content", "cached": True}
+    with patch("src.enrichers.field_enricher.load_yaml_from_cache", return_value=("yaml content", cached_meta)):
         results = enricher.enrich_url(url)
 
     assert len(results) == 1
@@ -192,8 +207,8 @@ def test_enrich_url_cache_hit_writes_back(enricher):
     )
 
 
-def test_enrich_url_firecrawl_fallback_on_no_snapshot(enricher):
-    """No snapshot → Firecrawl called → extract → write_back called."""
+def test_enrich_url_cache_miss_fetches_live_playwright(enricher):
+    """Cache miss: live Playwright fetch used; source set to 'playwright'."""
     league = _make_league()
     url = "https://ottawavolleysixes.com/register"
 
@@ -202,42 +217,90 @@ def test_enrich_url_firecrawl_fallback_on_no_snapshot(enricher):
     enricher._extract = MagicMock(return_value=patches)
     enricher._write_back = MagicMock()
 
-    mock_fc_instance = MagicMock()
-    mock_fc_instance.scrape.return_value = "Firecrawl page content"
+    live_meta = {"full_text": "live page text", "cached": False}
+    with (
+        patch("src.enrichers.field_enricher.load_yaml_from_cache", return_value=(None, None)),
+        patch("src.enrichers.field_enricher.fetch_page_as_yaml", return_value=("live yaml", live_meta)),
+    ):
+        results = enricher.enrich_url(url)
 
-    with patch("src.enrichers.field_enricher.get_snapshots_by_domain", return_value=[]):
-        with patch("src.enrichers.field_enricher.FirecrawlClient", return_value=mock_fc_instance):
-            results = enricher.enrich_url(url)
-
-    assert results[0].source == "firecrawl"
+    assert results[0].source == "playwright"
     assert "venue_name" in results[0].filled_fields
-    mock_fc_instance.scrape.assert_called_once_with(url)
 
 
-def test_enrich_url_firecrawl_fallback_on_empty_extraction(enricher):
-    """Snapshot exists but extraction empty → falls back to Firecrawl."""
+def test_enrich_url_playwright_fetch_failure_returns_error(enricher):
+    """Live Playwright fetch raises → result with error set, no exception raised."""
+    league = _make_league()
+    url = "https://ottawavolleysixes.com/register"
+
+    _mock_db_leagues(enricher, [league])
+    enricher._write_back = MagicMock()
+
+    with (
+        patch("src.enrichers.field_enricher.load_yaml_from_cache", return_value=(None, None)),
+        patch("src.enrichers.field_enricher.fetch_page_as_yaml", side_effect=RuntimeError("Playwright failed")),
+    ):
+        results = enricher.enrich_url(url)
+
+    assert results[0].error is not None
+    assert "Playwright" in results[0].error
+    assert results[0].source == "none"
+    enricher._write_back.assert_not_called()
+
+
+def test_enrich_url_explicit_firecrawl_mode(enricher):
+    """use_firecrawl=True: Firecrawl called after extraction with source 'firecrawl'."""
     league = _make_league()
     url = "https://ottawavolleysixes.com/register"
 
     _mock_db_leagues(enricher, [league])
     call_count = {"n": 0}
 
-    def extract_side_effect(content, null_fields, leagues):
+    def extract_side_effect(content, null_fields, leagues, full_text=""):
         call_count["n"] += 1
-        return [] if call_count["n"] == 1 else [{"league_id": "uuid-1", "venue_name": "Nepean"}]
+        # First call (Playwright cache) returns nothing; second (Firecrawl) fills
+        if call_count["n"] == 1:
+            return []
+        return [{"league_id": "uuid-1", "venue_name": "Nepean Sportsplex"}]
 
     enricher._extract = MagicMock(side_effect=extract_side_effect)
     enricher._write_back = MagicMock()
 
     mock_fc_instance = MagicMock()
-    mock_fc_instance.scrape.return_value = "Firecrawl content"
+    mock_fc_instance.scrape.return_value = "Firecrawl page content"
 
-    snapshot = {"content": "standings only"}
-    with patch("src.enrichers.field_enricher.get_snapshots_by_domain", return_value=[snapshot]):
-        with patch("src.enrichers.field_enricher.FirecrawlClient", return_value=mock_fc_instance):
-            results = enricher.enrich_url(url)
+    cached_meta = {"full_text": "standings only", "cached": True}
+    with (
+        patch("src.enrichers.field_enricher.load_yaml_from_cache", return_value=("yaml content", cached_meta)),
+        patch("src.enrichers.field_enricher.FirecrawlClient", return_value=mock_fc_instance),
+    ):
+        results = enricher.enrich_url(url, use_firecrawl=True)
 
     assert results[0].source == "firecrawl"
+    mock_fc_instance.scrape.assert_called_once_with(url)
+
+
+def test_enrich_url_firecrawl_not_called_by_default(enricher):
+    """Firecrawl is NOT called automatically when cache extraction is empty."""
+    league = _make_league()
+    url = "https://ottawavolleysixes.com/register"
+
+    _mock_db_leagues(enricher, [league])
+    enricher._extract = MagicMock(return_value=[])
+    enricher._write_back = MagicMock()
+    enricher._mini_crawl_for_fields = MagicMock(return_value={})
+
+    mock_fc_instance = MagicMock()
+
+    cached_meta = {"full_text": "standings only", "cached": True}
+    with (
+        patch("src.enrichers.field_enricher.load_yaml_from_cache", return_value=("yaml content", cached_meta)),
+        patch("src.enrichers.field_enricher.FirecrawlClient", return_value=mock_fc_instance),
+    ):
+        results = enricher.enrich_url(url)
+
+    mock_fc_instance.scrape.assert_not_called()
+    assert results[0].source == "none"
 
 
 def test_enrich_url_no_null_fields_skips_extraction(enricher):
@@ -248,8 +311,7 @@ def test_enrich_url_no_null_fields_skips_extraction(enricher):
     _mock_db_leagues(enricher, [league])
     enricher._extract = MagicMock()
 
-    with patch("src.enrichers.field_enricher.get_snapshots_by_domain", return_value=[]):
-        results = enricher.enrich_url(url)
+    results = enricher.enrich_url(url)
 
     enricher._extract.assert_not_called()
     assert results[0].source == "none"
@@ -257,20 +319,24 @@ def test_enrich_url_no_null_fields_skips_extraction(enricher):
 
 
 def test_enrich_url_firecrawl_error_returns_error_result(enricher):
-    """Firecrawl failure → result with error set, no exception raised."""
+    """Firecrawl failure with use_firecrawl=True → result with error set, no exception raised."""
     league = _make_league()
     url = "https://ottawavolleysixes.com/register"
 
     _mock_db_leagues(enricher, [league])
     enricher._extract = MagicMock(return_value=[])
     enricher._write_back = MagicMock()
+    enricher._mini_crawl_for_fields = MagicMock(return_value={})
 
     mock_fc_instance = MagicMock()
     mock_fc_instance.scrape.side_effect = RuntimeError("Firecrawl blocked")
 
-    with patch("src.enrichers.field_enricher.get_snapshots_by_domain", return_value=[]):
-        with patch("src.enrichers.field_enricher.FirecrawlClient", return_value=mock_fc_instance):
-            results = enricher.enrich_url(url)
+    cached_meta = {"full_text": "", "cached": True}
+    with (
+        patch("src.enrichers.field_enricher.load_yaml_from_cache", return_value=("yaml content", cached_meta)),
+        patch("src.enrichers.field_enricher.FirecrawlClient", return_value=mock_fc_instance),
+    ):
+        results = enricher.enrich_url(url, use_firecrawl=True)
 
     assert results[0].error is not None
     assert "blocked" in results[0].error
@@ -280,25 +346,23 @@ def test_enrich_url_firecrawl_error_returns_error_result(enricher):
 # ── TestMiniCrawlTier ─────────────────────────────────────────────────────────
 
 class TestMiniCrawlTier:
-    def test_enrich_url_calls_mini_crawl_when_snapshot_yields_nothing(self):
-        """When snapshot extraction returns empty patches, mini-crawl is attempted before Firecrawl."""
+    def test_enrich_url_calls_mini_crawl_when_cache_yields_nothing(self):
+        """When cache extraction returns empty patches, mini-crawl is attempted."""
         fake_leagues = [{"league_id": "abc", "organization_name": "Test", "url_scraped": "https://example.com", "is_archived": False, "team_fee": None, "venue_name": None}]
 
         with (
-            patch("src.enrichers.field_enricher.get_snapshots_by_domain") as mock_snaps,
+            patch("src.enrichers.field_enricher.load_yaml_from_cache") as mock_cache,
             patch("src.enrichers.field_enricher.FieldEnricher._extract") as mock_extract,
             patch("src.enrichers.field_enricher.FieldEnricher._mini_crawl_for_fields") as mock_mini,
-            patch("src.enrichers.field_enricher.FirecrawlClient") as mock_fc_cls,
             patch("src.enrichers.field_enricher.FieldEnricher._write_back"),
         ):
             # DB returns fake league
             mock_db = MagicMock()
             mock_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = fake_leagues
 
-            mock_snaps.return_value = [{"content": "snapshot content"}]
-            mock_extract.return_value = []  # snapshot extraction finds nothing
+            mock_cache.return_value = ("yaml content", {"full_text": "snapshot content", "cached": True})
+            mock_extract.return_value = []  # cache extraction finds nothing
             mock_mini.return_value = {"team_fee": 150.0}  # mini-crawl finds team_fee
-            mock_fc_cls.return_value.scrape.return_value = ""
 
             from src.enrichers.field_enricher import FieldEnricher
             enricher = FieldEnricher(supabase_client=mock_db)
@@ -306,9 +370,9 @@ class TestMiniCrawlTier:
 
         mock_mini.assert_called_once()
 
-    def test_mini_crawl_skipped_when_snapshot_fills_all_fields(self):
-        """Mini-crawl not attempted if snapshot extraction fills all null fields."""
-        # All ENRICHABLE_FIELDS populated except team_fee; snapshot patch fills team_fee
+    def test_mini_crawl_skipped_when_cache_fills_all_fields(self):
+        """Mini-crawl not attempted if cache extraction fills all null fields."""
+        # All ENRICHABLE_FIELDS populated except team_fee; cache patch fills team_fee
         base_league = {"league_id": "abc", "organization_name": "Test", "url_scraped": "https://example.com", "is_archived": False}
         for f in ENRICHABLE_FIELDS:
             base_league[f] = "x"
@@ -317,7 +381,7 @@ class TestMiniCrawlTier:
         fake_patch = [{"league_id": "abc", "team_fee": 150.0}]
 
         with (
-            patch("src.enrichers.field_enricher.get_snapshots_by_domain") as mock_snaps,
+            patch("src.enrichers.field_enricher.load_yaml_from_cache") as mock_cache,
             patch("src.enrichers.field_enricher.FieldEnricher._extract") as mock_extract,
             patch("src.enrichers.field_enricher.FieldEnricher._mini_crawl_for_fields") as mock_mini,
             patch("src.enrichers.field_enricher.FieldEnricher._write_back"),
@@ -325,8 +389,8 @@ class TestMiniCrawlTier:
             mock_db = MagicMock()
             mock_db.table.return_value.select.return_value.eq.return_value.eq.return_value.execute.return_value.data = fake_leagues
 
-            mock_snaps.return_value = [{"content": "snapshot content"}]
-            mock_extract.return_value = fake_patch  # snapshot filled everything
+            mock_cache.return_value = ("yaml content", {"full_text": "snapshot content", "cached": True})
+            mock_extract.return_value = fake_patch  # cache filled everything
 
             from src.enrichers.field_enricher import FieldEnricher
             enricher = FieldEnricher(supabase_client=mock_db)
